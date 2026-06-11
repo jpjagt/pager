@@ -1,0 +1,68 @@
+import XCTest
+@testable import PagerCore
+
+final class LinkStoreTests: XCTestCase {
+    var defaults: UserDefaults!
+
+    override func setUp() {
+        defaults = UserDefaults(suiteName: "LinkStoreTests")!
+        defaults.removePersistentDomain(forName: "LinkStoreTests")
+    }
+
+    func testDeviceIdIsStable() {
+        let a = LinkStore(defaults: defaults).deviceId
+        let b = LinkStore(defaults: defaults).deviceId
+        XCTAssertEqual(a, b)
+        XCTAssertFalse(a.isEmpty)
+    }
+
+    func testAddAssignsDefaultNicknameAndPersists() {
+        let store = LinkStore(defaults: defaults)
+        let code = ShareCode.generate()
+        let link = store.add(code: code)
+        XCTAssertEqual(link.nickname, "Pager 1")
+        XCTAssertEqual(store.add(code: ShareCode.generate()).nickname, "Pager 2")
+
+        let reloaded = LinkStore(defaults: defaults)
+        XCTAssertEqual(reloaded.links.count, 2)
+        XCTAssertEqual(reloaded.links[0].code, code.full)
+    }
+
+    func testRemove() {
+        let store = LinkStore(defaults: defaults)
+        let link = store.add(code: ShareCode.generate())
+        store.remove(id: link.id)
+        XCTAssertTrue(store.links.isEmpty)
+        XCTAssertTrue(LinkStore(defaults: defaults).links.isEmpty)
+    }
+
+    func testUpdateCachedTextPersists() {
+        let store = LinkStore(defaults: defaults)
+        let link = store.add(code: ShareCode.generate())
+        store.updateCachedText(id: link.id, text: "hello", writtenAt: 123)
+        let reloaded = LinkStore(defaults: defaults)
+        XCTAssertEqual(reloaded.links[0].cachedText, "hello")
+        XCTAssertEqual(reloaded.links[0].cachedWrittenAt, 123)
+    }
+
+    func testUpdateLinkPersistsAppearanceAndNickname() {
+        let store = LinkStore(defaults: defaults)
+        var link = store.add(code: ShareCode.generate())
+        link.nickname = "Tom"
+        link.appearance.maxWidth = 150
+        link.appearance.fontSize = 15
+        link.appearance.colorHex = "#FF0000"
+        store.update(link)
+        let reloaded = LinkStore(defaults: defaults).links[0]
+        XCTAssertEqual(reloaded.nickname, "Tom")
+        XCTAssertEqual(reloaded.appearance.maxWidth, 150)
+        XCTAssertEqual(reloaded.appearance.colorHex, "#FF0000")
+    }
+
+    func testShareCodeAccessor() {
+        let store = LinkStore(defaults: defaults)
+        let code = ShareCode.generate()
+        let link = store.add(code: code)
+        XCTAssertEqual(link.shareCode, code)
+    }
+}
