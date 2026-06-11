@@ -22,7 +22,8 @@ public enum TextUtil {
         var s = hex.trimmingCharacters(in: .whitespaces)
         guard s.hasPrefix("#") else { return nil }
         s.removeFirst()
-        guard s.count == 6, let value = UInt32(s, radix: 16) else { return nil }
+        guard s.count == 6, s.allSatisfy(\.isHexDigit),
+              let value = UInt32(s, radix: 16) else { return nil }
         return NSColor(
             srgbRed: CGFloat((value >> 16) & 0xFF) / 255,
             green: CGFloat((value >> 8) & 0xFF) / 255,
