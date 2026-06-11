@@ -29,6 +29,7 @@ public final class SyncEngine {
     private var pending: PagerValue? // edited locally, not yet accepted by server
     private var streamTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
+    private var flushTask: Task<Void, Never>?
     private var backoff = Backoff()
 
     public init(
@@ -56,6 +57,8 @@ public final class SyncEngine {
         streamTask?.cancel()
         streamTask = nil
         debounceTask?.cancel()
+        flushTask?.cancel()
+        flushTask = nil
     }
 
     /// Immediate reconnect (network path restored / wake from sleep).
@@ -74,7 +77,7 @@ public final class SyncEngine {
             guard let self else { return }
             try? await Task.sleep(nanoseconds: self.debounceMs * 1_000_000)
             guard !Task.isCancelled else { return }
-            await self.flushPending()
+            self.scheduleFlush()
         }
     }
 
@@ -88,7 +91,7 @@ public final class SyncEngine {
         while !Task.isCancelled {
             do {
                 for try await event in transport.stream(pathId: pathId) {
-                    handle(event)
+                    if handle(event) { break }
                 }
             } catch is CancellationError {
                 return
@@ -107,22 +110,25 @@ public final class SyncEngine {
         let data: PagerValue?
     }
 
-    private func handle(_ event: SSEEvent) {
+    /// Returns true when the stream should be abandoned and reconnected
+    /// (via the run loop's backoff path).
+    private func handle(_ event: SSEEvent) -> Bool {
         switch event.name {
         case "put":
             guard let payload = try? JSONDecoder().decode(
-                PutPayload.self, from: Data(event.data.utf8)) else { return }
+                PutPayload.self, from: Data(event.data.utf8)) else { return false }
             if state != .connected {
                 state = .connected
                 backoff.reset()
             }
             apply(remote: payload.data)
+            return false
         case "keep-alive", "patch":
-            break // we only ever PUT whole nodes; patch can't occur
+            return false // we only ever PUT whole nodes; patch can't occur
         case "cancel", "auth_revoked":
-            start() // re-establish the stream
+            return true // abandon stream; run loop reconnects with backoff
         default:
-            break
+            return false
         }
     }
 
@@ -130,14 +136,18 @@ public final class SyncEngine {
         // Pending local edit: either it still wins (push it) or it's stale (drop it).
         if let pending {
             if LWW.wins(pending, over: remote) {
-                Task { await flushPending() }
+                scheduleFlush()
                 return
             }
             self.pending = nil
         }
         guard let remote else { return }
         if remote.updatedBy == deviceId {
-            lastApplied = remote // our echo: record, don't re-deliver
+            // Our echo: record, don't re-deliver. Out-of-order older echoes
+            // must not regress lastApplied.
+            if LWW.wins(remote, over: lastApplied) {
+                lastApplied = remote
+            }
             return
         }
         guard LWW.wins(remote, over: lastApplied) else { return }
@@ -148,20 +158,33 @@ public final class SyncEngine {
         }
     }
 
+    /// Serializes flushes: each one awaits the prior, then re-reads `pending`
+    /// (which always holds the newest edit), so an older value can never land
+    /// after a newer one from this device. Tracked so `stop()` cancels it.
+    private func scheduleFlush() {
+        let prior = flushTask
+        flushTask = Task { [weak self] in
+            await prior?.value
+            await self?.flushPending()
+        }
+    }
+
     private func flushPending() async {
-        guard let value = pending else { return }
-        do {
-            try await transport.put(pathId: pathId, value: value)
-            if pending == value {
-                pending = nil
-                lastApplied = value
+        while let value = pending, !Task.isCancelled {
+            do {
+                try await transport.put(pathId: pathId, value: value)
+                if pending == value {
+                    pending = nil
+                    lastApplied = value
+                }
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                // Stays pending; retried after backoff (or on next snapshot/edit).
+                state = .reconnecting
+                try? await Task.sleep(nanoseconds: UInt64(backoff.nextDelay() * 1_000_000_000))
             }
-        } catch {
-            // Stays pending; retried on next reconnect snapshot or next edit.
-            state = .reconnecting
-            let delay = backoff.nextDelay()
-            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            await flushPending()
         }
     }
 }

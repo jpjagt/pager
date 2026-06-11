@@ -5,15 +5,15 @@ import XCTest
 final class FakeTransport: SyncTransport, @unchecked Sendable {
     var puts: [PagerValue] = []
     var putError: Error?
+    var putAttempts = 0
     private var continuation: AsyncThrowingStream<SSEEvent, Error>.Continuation?
-    let putExpectation = XCTestExpectation(description: "put received")
 
     func get(pathId: String) async throws -> PagerValue? { nil }
 
     func put(pathId: String, value: PagerValue) async throws {
+        putAttempts += 1
         if let putError { throw putError }
         puts.append(value)
-        putExpectation.fulfill()
     }
 
     func stream(pathId: String) -> AsyncThrowingStream<SSEEvent, Error> {
@@ -125,5 +125,35 @@ final class SyncEngineTests: XCTestCase {
         transport.dropStream()
         await settle()
         XCTAssertEqual(states.last, .reconnecting)
+    }
+
+    func testPutFailureRetriesThenSucceeds() async throws {
+        transport.putError = URLError(.notConnectedToInternet)
+        engine.setText("retry me")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(states.contains(.reconnecting))
+        XCTAssertTrue(transport.puts.isEmpty)
+        transport.putError = nil
+        try await Task.sleep(nanoseconds: 1_300_000_000) // first backoff delay is 1s
+        XCTAssertEqual(transport.puts.count, 1)
+        XCTAssertEqual(crypto.decrypt(transport.puts[0].ct), "retry me")
+    }
+
+    func testUndecryptableValueKeepsLastGoodText() async {
+        transport.emit(node: remote("good", at: 100))
+        await settle()
+        transport.emit(node: PagerValue(ct: "!!!notbase64", writtenAt: 200, updatedBy: "FRIEND"))
+        await settle()
+        XCTAssertEqual(received, ["good"])
+    }
+
+    func testStopDuringFailedRetryStopsAttempts() async throws {
+        transport.putError = URLError(.notConnectedToInternet)
+        engine.setText("doomed")
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let attemptsBeforeStop = transport.putAttempts
+        engine.stop()
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertLessThanOrEqual(transport.putAttempts, attemptsBeforeStop + 1) // no busy loop
     }
 }
