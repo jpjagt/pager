@@ -1,4 +1,6 @@
-# BFF Pager — Design Spec
+# Pager — Design Spec
+
+*(App name: **Pager**. Repo/site keep the bff-pager slug.)*
 
 *2026-06-11 — approved via brainstorming session*
 
@@ -50,6 +52,10 @@ One node per link:
 /pagers/{pathId} = {
   ct:        "<base64 nonce+ciphertext+tag>",   // the encrypted text
   writtenAt: 1749632100123,                      // client Unix ms at edit time
+  updatedAt: 1749632320123,                      // server Unix ms at update time
+                                                 // (PUT sends {".sv":"timestamp"};
+                                                 //  server fills it in; debug/forensic
+                                                 //  only — LWW keys on writtenAt)
   updatedBy: "<random per-device UUID>"
 }
 ```
@@ -98,7 +104,8 @@ encryption). Rules:
 - No read/list at `/pagers` root (no enumeration).
 - Read/write allowed at `/pagers/{pathId}`.
 - Validate node shape: `ct` is a string ≤ 2 KB, `writtenAt` is a number,
-  `updatedBy` is a string ≤ 64 chars, no extra keys.
+  `updatedAt` is a number, `updatedBy` is a string ≤ 64 chars, no extra
+  keys.
 
 ## App architecture
 
@@ -169,7 +176,7 @@ step and changes nothing in the app.
 ## Repo layout
 
 ```
-BFFPager.xcodeproj
+Pager.xcodeproj
 Sources/
   App/        # app delegate, status item controllers, launch at login
   Models/     # PagerLink, LinkStore
