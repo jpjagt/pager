@@ -107,8 +107,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onDone: { [weak self] in self?.addPagerWindow.close() }))
     }
 
-    /// Replaced with the real settings window in Task 15.
-    func showSettings() {}
+    private lazy var settingsWindow = WindowHost<SettingsView>(
+        title: "Pager Settings", size: NSSize(width: 440, height: 420))
+
+    func showSettings() {
+        settingsWindow.show(SettingsView(
+            store: store,
+            onAddPager: { [weak self] in self?.showOnboarding() }))
+    }
 
     private func showConfigAlert() {
         let alert = NSAlert()
