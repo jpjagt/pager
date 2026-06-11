@@ -30,6 +30,7 @@ public final class SyncEngine {
     private var streamTask: Task<Void, Never>?
     private var debounceTask: Task<Void, Never>?
     private var flushTask: Task<Void, Never>?
+    private var flushEpoch = 0
     private var backoff = Backoff()
 
     public init(
@@ -57,6 +58,8 @@ public final class SyncEngine {
         streamTask?.cancel()
         streamTask = nil
         debounceTask?.cancel()
+        debounceTask = nil
+        flushEpoch += 1 // invalidate every link in the flush chain, not just the head
         flushTask?.cancel()
         flushTask = nil
     }
@@ -163,21 +166,26 @@ public final class SyncEngine {
     /// after a newer one from this device. Tracked so `stop()` cancels it.
     private func scheduleFlush() {
         let prior = flushTask
+        let epoch = flushEpoch
         flushTask = Task { [weak self] in
             await prior?.value
-            await self?.flushPending()
+            await self?.flushPending(epoch: epoch)
         }
     }
 
-    private func flushPending() async {
-        while let value = pending, !Task.isCancelled {
+    private func flushPending(epoch: Int) async {
+        // The epoch check (re-evaluated on the main actor each iteration,
+        // including after the backoff sleep) lets stop() halt every link in
+        // the chain, not just the one flushTask currently points at.
+        while epoch == flushEpoch, let value = pending, !Task.isCancelled {
             do {
                 try await transport.put(pathId: pathId, value: value)
                 if pending == value {
                     pending = nil
                     lastApplied = value
+                    return
                 }
-                return
+                // A newer edit arrived mid-PUT; loop to flush it now.
             } catch is CancellationError {
                 return
             } catch {

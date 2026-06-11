@@ -156,4 +156,18 @@ final class SyncEngineTests: XCTestCase {
         try await Task.sleep(nanoseconds: 500_000_000)
         XCTAssertLessThanOrEqual(transport.putAttempts, attemptsBeforeStop + 1) // no busy loop
     }
+
+    func testStopCancelsAllLinksInFlushChain() async throws {
+        transport.putError = URLError(.notConnectedToInternet)
+        engine.setText("A")
+        try await Task.sleep(nanoseconds: 200_000_000) // link 1 now in backoff sleep
+        engine.setText("B") // link 2 chained behind link 1
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let attemptsBeforeStop = transport.putAttempts
+        engine.stop()
+        // Longer than the 1s first backoff: a zombie link would have retried.
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        XCTAssertLessThanOrEqual(transport.putAttempts, attemptsBeforeStop + 1)
+        XCTAssertTrue(transport.puts.isEmpty)
+    }
 }
