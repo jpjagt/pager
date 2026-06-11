@@ -96,8 +96,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return NSHostingController(rootView: PopoverView(model: model))
     }
 
-    /// Replaced with the real onboarding in Task 14.
-    func showOnboarding() {}
+    private lazy var addPagerWindow = WindowHost<AddPagerView>(
+        title: "Pager", size: NSSize(width: 420, height: 320))
+
+    func showOnboarding() {
+        addPagerWindow.show(AddPagerView(
+            isOnboarding: store.links.isEmpty,
+            store: store,
+            transport: transport,
+            onDone: { [weak self] in self?.addPagerWindow.close() }))
+    }
 
     /// Replaced with the real settings window in Task 15.
     func showSettings() {}
