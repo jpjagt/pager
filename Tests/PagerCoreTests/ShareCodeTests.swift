@@ -28,6 +28,7 @@ final class ShareCodeTests: XCTestCase {
         let b = ShareCode(entropy: "00000000000000").full
         XCTAssertEqual(a, b)
         XCTAssertEqual(String(a.suffix(2)), ShareCode.checksum(for: "00000000000000"))
+        XCTAssertEqual(ShareCode.checksum(for: "00000000000000"), "5S")
     }
 
     func testParseIsCaseAndHyphenInsensitive() {

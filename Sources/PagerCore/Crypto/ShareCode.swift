@@ -10,7 +10,7 @@ public struct ShareCode: Equatable, Hashable {
     public let entropy: String
 
     public init(entropy: String) {
-        precondition(entropy.count == 14)
+        precondition(entropy.count == 14 && entropy.allSatisfy { Self.alphabet.contains($0) })
         self.entropy = entropy
     }
 
