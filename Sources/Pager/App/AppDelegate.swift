@@ -86,9 +86,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func engine(for id: UUID) -> SyncEngine? { engines[id] }
 
-    /// Replaced with the real popover in Task 13.
     func popoverContent(for linkId: UUID) -> NSViewController {
-        NSViewController()
+        guard let link = store.links.first(where: { $0.id == linkId }) else {
+            return NSViewController()
+        }
+        let model = LinkViewModel(link: link, store: store, engine: engines[linkId])
+        model.onClose = { [weak self] in self?.controllers[linkId]?.closePopover() }
+        model.onOpenSettings = { [weak self] in self?.showSettings() }
+        return NSHostingController(rootView: PopoverView(model: model))
     }
 
     /// Replaced with the real onboarding in Task 14.
