@@ -65,4 +65,14 @@ final class LinkStoreTests: XCTestCase {
         let link = store.add(code: code)
         XCTAssertEqual(link.shareCode, code)
     }
+
+    func testUpdateMetaPreservesNewerCachedText() {
+        let store = LinkStore(defaults: defaults)
+        let stale = store.add(code: ShareCode.generate()) // snapshot before sync
+        store.updateCachedText(id: stale.id, text: "fresh message", writtenAt: 999)
+        store.updateMeta(id: stale.id, nickname: "Tom", appearance: stale.appearance)
+        XCTAssertEqual(store.links[0].nickname, "Tom")
+        XCTAssertEqual(store.links[0].cachedText, "fresh message")
+        XCTAssertEqual(store.links[0].cachedWrittenAt, 999)
+    }
 }

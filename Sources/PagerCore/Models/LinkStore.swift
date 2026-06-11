@@ -51,6 +51,15 @@ public final class LinkStore: ObservableObject {
         save()
     }
 
+    /// Updates user-editable metadata without touching the cached text, so a
+    /// stale UI snapshot can never clobber a newer synced message.
+    public func updateMeta(id: UUID, nickname: String, appearance: AppearancePrefs) {
+        guard let index = links.firstIndex(where: { $0.id == id }) else { return }
+        links[index].nickname = nickname
+        links[index].appearance = appearance
+        save()
+    }
+
     public func updateCachedText(id: UUID, text: String, writtenAt: Int64) {
         guard let index = links.firstIndex(where: { $0.id == id }) else { return }
         links[index].cachedText = text

@@ -34,7 +34,7 @@ struct PopoverView: View {
 
             if !model.detectedURLs.isEmpty {
                 HStack(spacing: 12) {
-                    ForEach(model.detectedURLs, id: \.url) { match in
+                    ForEach(Array(model.detectedURLs.enumerated()), id: \.offset) { _, match in
                         Link(match.url.absoluteString, destination: match.url)
                             .font(.caption)
                             .underline()

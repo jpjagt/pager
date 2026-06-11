@@ -15,7 +15,7 @@ struct SettingsView: View {
                 ForEach(store.links) { link in
                     LinkSettingsRow(
                         link: link,
-                        onChange: { store.update($0) },
+                        onChange: { store.updateMeta(id: $0.id, nickname: $0.nickname, appearance: $0.appearance) },
                         onUnlink: { confirmUnlink = link })
                     Divider()
                 }

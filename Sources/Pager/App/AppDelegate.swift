@@ -46,6 +46,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reconnectAll()
     }
 
+    /// Clicking the app in Finder/Dock-less reopen: with no links there is no
+    /// status item, so this is the only way back in.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if store.links.isEmpty { showOnboarding() }
+        return true
+    }
+
     private func reconnectAll() {
         engines.values.forEach { $0.reconnectNow() }
     }
@@ -63,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if controllers[link.id] == nil { addController(for: link) }
             controllers[link.id]?.render(text: link.cachedText, prefs: link.appearance)
         }
+        // Unlinking the last pager leaves no status item — reopen onboarding
+        // so the app stays reachable.
+        if links.isEmpty { showOnboarding() }
     }
 
     private func addController(for link: PagerLink) {
@@ -117,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showConfigAlert() {
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Pager is not configured"
         alert.informativeText = "Set the Firebase database URL in PagerConfig.swift (see docs/firebase-setup.md)."
