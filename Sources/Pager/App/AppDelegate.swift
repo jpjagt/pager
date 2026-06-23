@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let pathMonitor = NWPathMonitor()
     private var transport: SyncTransport?
     private let syncLog = FileSyncLog(url: AppDelegate.logURL)
+    private let mailComposer: MailComposer = SharingServiceMailComposer()
+    let updateController = UpdateController()
 
     /// ~/Library/Logs/Pager/pager-logs.jsonl — also visible in Console.app.
     static let logURL: URL = FileManager.default
@@ -161,32 +163,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func sendDebugReport(includeMessages: Bool) -> Bool {
         let info = Bundle.main.infoDictionary
         let os = ProcessInfo.processInfo.operatingSystemVersion
-        let report = DebugReport(
+        let report = DebugReportFactory.make(
+            store: store,
+            states: engines.mapValues { "\($0.state)" },
             appVersion: info?["CFBundleShortVersionString"] as? String ?? "?",
             build: info?["CFBundleVersion"] as? String ?? "?",
-            osVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
-            deviceId: store.deviceId,
-            links: store.links.map { link in
-                let pathId = PagerCrypto(code: link.shareCode).pathId
-                return DebugReport.LinkInfo(
-                    nickname: link.nickname,
-                    pathPrefix: String(pathId.prefix(8)),
-                    state: engines[link.id].map { "\($0.state)" } ?? "offline",
-                    lastWrittenAt: link.cachedWrittenAt,
-                    codeDisplay: link.shareCode.display)
-            })
+            osVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)")
 
-        guard let service = NSSharingService(named: .composeEmail) else { return false }
-        service.recipients = [PagerConfig.supportEmail]
-        service.subject = report.subject
-
-        var items: [Any] = [report.body(includeMessages: includeMessages)]
-        if FileManager.default.fileExists(atPath: AppDelegate.logURL.path) {
-            items.append(AppDelegate.logURL)
-        }
-        guard service.canPerform(withItems: items) else { return false }
-        service.perform(withItems: items)
-        return true
+        let logExists = FileManager.default.fileExists(atPath: AppDelegate.logURL.path)
+        let mail = ComposedMail(
+            recipient: PagerConfig.supportEmail,
+            subject: report.subject,
+            body: report.body(includeMessages: includeMessages),
+            attachment: logExists ? AppDelegate.logURL : nil)
+        return mailComposer.compose(mail)
     }
 
     private func showConfigAlert() {
