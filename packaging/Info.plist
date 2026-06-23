@@ -22,5 +22,9 @@
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>july.dev</string>
+    <key>SUFeedURL</key>
+    <string>https://july.dev/pager/appcast.xml</string>
+    <key>SUPublicEDKey</key>
+    <string>1WrR/akmBfE7yp0mQUBHgSP3M5W96tgIPVMf8+dO/oM=</string>
 </dict>
 </plist>
