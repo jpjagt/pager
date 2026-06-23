@@ -15,7 +15,12 @@ public final class SyncEngine {
     public var onState: ((State) -> Void)?
 
     public private(set) var state: State = .offline {
-        didSet { if state != oldValue { onState?(state) } }
+        didSet {
+            if state != oldValue {
+                onState?(state)
+                event("state", state: "\(state)")
+            }
+        }
     }
 
     private let transport: SyncTransport
@@ -24,6 +29,9 @@ public final class SyncEngine {
     private let deviceId: String
     private let now: () -> Int64
     private let debounceMs: UInt64
+    private let log: SyncLogSink
+    /// First 8 hex of the pathId — tags every log line to this link.
+    private let linkTag: String
 
     private var lastApplied: PagerValue?
     private var pending: PagerValue? // edited locally, not yet accepted by server
@@ -39,7 +47,8 @@ public final class SyncEngine {
         pathId: String,
         deviceId: String,
         now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
-        debounceMs: UInt64 = 300
+        debounceMs: UInt64 = 300,
+        log: SyncLogSink = NoopSyncLog()
     ) {
         self.transport = transport
         self.crypto = crypto
@@ -47,6 +56,17 @@ public final class SyncEngine {
         self.deviceId = deviceId
         self.now = now
         self.debounceMs = debounceMs
+        self.log = log
+        self.linkTag = String(pathId.prefix(8))
+    }
+
+    private func event(_ ev: String, writtenAt: Int64? = nil, pendingWa: Int64? = nil,
+                       remoteWa: Int64? = nil, lastWa: Int64? = nil, remoteBy: String? = nil,
+                       len: Int? = nil, ct: String? = nil, state: String? = nil,
+                       error: String? = nil) {
+        log.log(SyncLogEvent(ev: ev, link: linkTag, writtenAt: writtenAt, pendingWa: pendingWa,
+                             remoteWa: remoteWa, lastWa: lastWa, remoteBy: remoteBy, len: len,
+                             ct: ct, state: state, error: error))
     }
 
     public func start() {
@@ -70,11 +90,12 @@ public final class SyncEngine {
         start()
     }
 
-    /// Called on every keystroke. Local UI is updated optimistically by the
-    /// caller; this schedules the debounced encrypted PUT.
+    /// Schedules a debounced encrypted PUT.
     public func setText(_ text: String) {
         guard let ct = try? crypto.encrypt(text) else { return }
-        pending = PagerValue(ct: ct, writtenAt: now(), updatedBy: deviceId)
+        let writtenAt = now()
+        pending = PagerValue(ct: ct, writtenAt: writtenAt, updatedBy: deviceId)
+        event("edit.set", writtenAt: writtenAt, len: text.count, ct: ct)
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard let self else { return }
@@ -82,6 +103,18 @@ public final class SyncEngine {
             guard !Task.isCancelled else { return }
             self.scheduleFlush()
         }
+    }
+
+    /// Encrypts and flushes immediately, skipping the debounce — used when the
+    /// editor closes and the final text should reach the server right away.
+    public func commitText(_ text: String) {
+        guard let ct = try? crypto.encrypt(text) else { return }
+        let writtenAt = now()
+        pending = PagerValue(ct: ct, writtenAt: writtenAt, updatedBy: deviceId)
+        event("edit.commit", writtenAt: writtenAt, len: text.count, ct: ct)
+        debounceTask?.cancel()
+        debounceTask = nil
+        scheduleFlush()
     }
 
     /// Test hook: inject a pending offline edit without scheduling a flush.
@@ -99,6 +132,7 @@ public final class SyncEngine {
             } catch is CancellationError {
                 return
             } catch {
+                event("stream.drop", error: "\(error)")
                 // fall through to reconnect
             }
             guard !Task.isCancelled else { return }
@@ -139,25 +173,35 @@ public final class SyncEngine {
         // Pending local edit: either it still wins (push it) or it's stale (drop it).
         if let pending {
             if LWW.wins(pending, over: remote) {
+                event("apply.pending_wins", pendingWa: pending.writtenAt, remoteWa: remote?.writtenAt)
                 scheduleFlush()
                 return
             }
+            event("apply.discard_pending", pendingWa: pending.writtenAt,
+                  remoteWa: remote?.writtenAt, remoteBy: remote?.updatedBy)
             self.pending = nil
         }
         guard let remote else { return }
         if remote.updatedBy == deviceId {
             // Our echo: record, don't re-deliver. Out-of-order older echoes
             // must not regress lastApplied.
+            event("apply.echo", writtenAt: remote.writtenAt)
             if LWW.wins(remote, over: lastApplied) {
                 lastApplied = remote
             }
             return
         }
-        guard LWW.wins(remote, over: lastApplied) else { return }
+        guard LWW.wins(remote, over: lastApplied) else {
+            event("apply.reject_stale", remoteWa: remote.writtenAt, lastWa: lastApplied?.writtenAt)
+            return
+        }
         lastApplied = remote
         // Undecryptable (corrupt/tampered): keep last good text.
         if let text = crypto.decrypt(remote.ct) {
+            event("apply.accept", writtenAt: remote.writtenAt, len: text.count, ct: remote.ct)
             onText?(text, remote.writtenAt)
+        } else {
+            event("apply.undecryptable", writtenAt: remote.writtenAt, ct: remote.ct)
         }
     }
 
@@ -180,6 +224,7 @@ public final class SyncEngine {
         while epoch == flushEpoch, let value = pending, !Task.isCancelled {
             do {
                 try await transport.put(pathId: pathId, value: value)
+                event("flush.put_ok", writtenAt: value.writtenAt, ct: value.ct)
                 if pending == value {
                     pending = nil
                     lastApplied = value
@@ -190,6 +235,7 @@ public final class SyncEngine {
                 return
             } catch {
                 // Stays pending; retried after backoff (or on next snapshot/edit).
+                event("flush.put_fail", writtenAt: value.writtenAt, error: "\(error)")
                 state = .reconnecting
                 try? await Task.sleep(nanoseconds: UInt64(backoff.nextDelay() * 1_000_000_000))
             }

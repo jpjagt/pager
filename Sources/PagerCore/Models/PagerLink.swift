@@ -6,11 +6,24 @@ public struct AppearancePrefs: Codable, Equatable {
     public var fontSize: Double
     /// "#RRGGBB"; nil = system default menu bar color.
     public var colorHex: String?
+    /// 0–1 alpha applied to the menu bar text.
+    public var opacity: Double
 
-    public init(maxWidth: Double = 250, fontSize: Double = 13, colorHex: String? = nil) {
+    public init(maxWidth: Double = 250, fontSize: Double = 13, colorHex: String? = nil,
+                opacity: Double = 1) {
         self.maxWidth = maxWidth
         self.fontSize = fontSize
         self.colorHex = colorHex
+        self.opacity = opacity
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        maxWidth = try container.decode(Double.self, forKey: .maxWidth)
+        fontSize = try container.decode(Double.self, forKey: .fontSize)
+        colorHex = try container.decodeIfPresent(String.self, forKey: .colorHex)
+        // Absent in prefs saved before the option existed.
+        opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
     }
 }
 

@@ -7,7 +7,7 @@
 3. In the Rules tab, replace the contents with `firebase/rules.json` from
    this repo and publish.
 4. Copy the database URL shown at the top of the Data tab, e.g.
-   `https://pager-default-rtdb.europe-west1.firebasedatabase.app`.
+   `https://bff-pager-default-rtdb.europe-west1.firebasedatabase.app`.
 5. Paste it into `Sources/PagerCore/PagerConfig.swift` as
    `databaseURLString` and commit.
 

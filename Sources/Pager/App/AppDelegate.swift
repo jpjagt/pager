@@ -7,11 +7,18 @@ import PagerCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let store = LinkStore()
+    private var placeholderItem: NSStatusItem?
     private var controllers: [UUID: StatusItemController] = [:]
     private var engines: [UUID: SyncEngine] = [:]
     private var cancellables: Set<AnyCancellable> = []
     private let pathMonitor = NWPathMonitor()
     private var transport: SyncTransport?
+    private let syncLog = FileSyncLog(url: AppDelegate.logURL)
+
+    /// ~/Library/Logs/Pager/pager-logs.jsonl — also visible in Console.app.
+    static let logURL: URL = FileManager.default
+        .urls(for: .libraryDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Logs/Pager/pager-logs.jsonl")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let url = PagerConfig.databaseURL {
@@ -46,8 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reconnectAll()
     }
 
-    /// Clicking the app in Finder/Dock-less reopen: with no links there is no
-    /// status item, so this is the only way back in.
+    /// Clicking the app in Finder/Dock-less reopen.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
         if store.links.isEmpty { showOnboarding() }
         return true
@@ -70,9 +76,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if controllers[link.id] == nil { addController(for: link) }
             controllers[link.id]?.render(text: link.cachedText, prefs: link.appearance)
         }
-        // Unlinking the last pager leaves no status item — reopen onboarding
-        // so the app stays reachable.
+        updatePlaceholder(visible: links.isEmpty)
         if links.isEmpty { showOnboarding() }
+    }
+
+    /// A single 📟 status item shown while no pagers are configured, so the
+    /// app stays reachable from the menu bar.
+    private func updatePlaceholder(visible: Bool) {
+        if visible {
+            guard placeholderItem == nil else { return }
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+            item.button?.title = "📟"
+            item.button?.target = self
+            item.button?.action = #selector(placeholderClicked)
+            placeholderItem = item
+        } else if let item = placeholderItem {
+            NSStatusBar.system.removeStatusItem(item)
+            placeholderItem = nil
+        }
+    }
+
+    @objc private func placeholderClicked() {
+        showOnboarding()
     }
 
     private func addController(for link: PagerLink) {
@@ -86,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let crypto = PagerCrypto(code: link.shareCode)
         let engine = SyncEngine(
             transport: transport, crypto: crypto,
-            pathId: crypto.pathId, deviceId: store.deviceId)
+            pathId: crypto.pathId, deviceId: store.deviceId, log: syncLog)
         engine.onText = { [weak self] text, writtenAt in
             self?.store.updateCachedText(id: linkId, text: text, writtenAt: writtenAt)
         }
@@ -123,7 +148,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showSettings() {
         settingsWindow.show(SettingsView(
             store: store,
-            onAddPager: { [weak self] in self?.showOnboarding() }))
+            onAddPager: { [weak self] in self?.showOnboarding() },
+            onEmailDebugReport: { [weak self] includeMessages in
+                self?.sendDebugReport(includeMessages: includeMessages) ?? false
+            }))
+    }
+
+    /// Composes a debug email (recipient/subject/body + log attachment) and
+    /// hands it to the user's mail client. Returns false if no mail account is
+    /// configured, so the UI can explain why nothing happened.
+    @discardableResult
+    func sendDebugReport(includeMessages: Bool) -> Bool {
+        let info = Bundle.main.infoDictionary
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let report = DebugReport(
+            appVersion: info?["CFBundleShortVersionString"] as? String ?? "?",
+            build: info?["CFBundleVersion"] as? String ?? "?",
+            osVersion: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
+            deviceId: store.deviceId,
+            links: store.links.map { link in
+                let pathId = PagerCrypto(code: link.shareCode).pathId
+                return DebugReport.LinkInfo(
+                    nickname: link.nickname,
+                    pathPrefix: String(pathId.prefix(8)),
+                    state: engines[link.id].map { "\($0.state)" } ?? "offline",
+                    lastWrittenAt: link.cachedWrittenAt,
+                    codeDisplay: link.shareCode.display)
+            })
+
+        guard let service = NSSharingService(named: .composeEmail) else { return false }
+        service.recipients = [PagerConfig.supportEmail]
+        service.subject = report.subject
+
+        var items: [Any] = [report.body(includeMessages: includeMessages)]
+        if FileManager.default.fileExists(atPath: AppDelegate.logURL.path) {
+            items.append(AppDelegate.logURL)
+        }
+        guard service.canPerform(withItems: items) else { return false }
+        service.perform(withItems: items)
+        return true
     }
 
     private func showConfigAlert() {

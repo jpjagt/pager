@@ -14,6 +14,7 @@ final class LinkViewModel: ObservableObject {
     private let engine: SyncEngine?
     private var hintTask: Task<Void, Never>?
     private var suppressNextEdit = false
+    private var dirty = false
     private var cancellables: Set<AnyCancellable> = []
 
     var onOpenSettings: (() -> Void)?
@@ -35,6 +36,7 @@ final class LinkViewModel: ObservableObject {
                 Task { @MainActor in
                     guard let self, newText != self.text else { return }
                     self.suppressNextEdit = true
+                    self.dirty = false // remote won; nothing local left to push
                     self.text = newText
                     self.detectedURLs = TextUtil.detectURLs(in: newText)
                 }
@@ -47,7 +49,8 @@ final class LinkViewModel: ObservableObject {
         if let engine { stateChanged(engine.state) }
     }
 
-    /// Called from the view's onChange. Optimistic local update + debounced sync.
+    /// Called from the view's onChange. Updates local state only; the remote
+    /// push happens in commit() when the popover closes.
     func textEdited() {
         if suppressNextEdit {
             suppressNextEdit = false
@@ -55,9 +58,16 @@ final class LinkViewModel: ObservableObject {
         }
         if text.count > 500 { text = String(text.prefix(500)) }
         detectedURLs = TextUtil.detectURLs(in: text)
+        dirty = true
         let writtenAt = Int64(Date().timeIntervalSince1970 * 1000)
         store.updateCachedText(id: linkId, text: text, writtenAt: writtenAt)
-        engine?.setText(text)
+    }
+
+    /// Pushes edited text to the server. Called when the popover closes.
+    func commit() {
+        guard dirty else { return }
+        dirty = false
+        engine?.commitText(text)
     }
 
     /// Offline hint with a 2 s grace period so routine reconnects don't flash it.

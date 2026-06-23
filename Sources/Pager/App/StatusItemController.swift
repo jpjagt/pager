@@ -27,11 +27,11 @@ final class StatusItemController: NSObject {
         let attributed = NSMutableAttributedString(
             string: display,
             attributes: [.font: NSFont.systemFont(ofSize: prefs.fontSize)])
-        if let hex = prefs.colorHex, let color = TextUtil.color(fromHex: hex) {
-            attributed.addAttribute(
-                .foregroundColor, value: color,
-                range: NSRange(location: 0, length: attributed.length))
-        }
+        let base = prefs.colorHex.flatMap(TextUtil.color(fromHex:)) ?? .labelColor
+        let color = prefs.opacity < 1 ? base.withAlphaComponent(prefs.opacity) : base
+        attributed.addAttribute(
+            .foregroundColor, value: color,
+            range: NSRange(location: 0, length: attributed.length))
         for match in TextUtil.detectURLs(in: display) {
             attributed.addAttribute(
                 .underlineStyle, value: NSUnderlineStyle.single.rawValue,

@@ -21,8 +21,11 @@ struct PopoverView: View {
                 } label: {
                     Image(systemName: "ellipsis")
                 }
-                .menuStyle(.borderlessButton)
-                .frame(width: 24)
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .foregroundStyle(.secondary)
+                .fixedSize()
             }
 
             TextField("Type something…", text: $model.text, axis: .vertical)
@@ -51,5 +54,6 @@ struct PopoverView: View {
         .padding(16)
         .frame(width: 360)
         .onAppear { focused = true }
+        .onDisappear { model.commit() } // fires on both close paths: button and click-away
     }
 }

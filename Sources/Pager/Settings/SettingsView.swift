@@ -5,9 +5,13 @@ import PagerCore
 struct SettingsView: View {
     @ObservedObject var store: LinkStore
     var onAddPager: (() -> Void)?
+    /// Returns false if no mail account is configured (so we can tell the user).
+    var onEmailDebugReport: ((_ includeMessages: Bool) -> Bool)?
 
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var confirmUnlink: PagerLink?
+    @State private var includeMessages = false
+    @State private var showNoMailAlert = false
 
     var body: some View {
         ScrollView {
@@ -30,16 +34,41 @@ struct SettingsView: View {
                     Spacer()
                     Button("Quit Pager") { NSApp.terminate(nil) }
                 }
+
+                Divider()
+                debugSection
             }
             .padding(20)
         }
         .frame(width: 440, height: 420)
+        .alert("No mail account configured", isPresented: $showNoMailAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Set up Mail (or another mail app) to send a debug report, or contact \(PagerConfig.supportEmail) directly.")
+        }
         .alert(item: $confirmUnlink) { link in
             Alert(
                 title: Text("Unlink \(link.nickname)?"),
                 message: Text("This removes the pager from this device only. Your BFF keeps theirs."),
                 primaryButton: .destructive(Text("Unlink")) { store.remove(id: link.id) },
                 secondaryButton: .cancel())
+        }
+    }
+
+    private var debugSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("something not syncing? send a debug report to pager's app developer. "
+                + "it attaches a technical log of recent sync activity. your messages stay "
+                + "encrypted in the log — they can only be read if you opt in below.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("Include the messages that were sent and received on your pagers",
+                   isOn: $includeMessages)
+                .font(.caption)
+            Button("Email a debug report") {
+                if onEmailDebugReport?(includeMessages) == false { showNoMailAlert = true }
+            }
         }
     }
 }
@@ -88,6 +117,17 @@ private struct LinkSettingsRow: View {
                         set: { link.appearance.fontSize = $0; onChange(link) }),
                     in: 9...18, step: 1)
                 Text("\(Int(link.appearance.fontSize)) pt")
+                    .font(.caption).monospacedDigit()
+                    .frame(width: 48, alignment: .trailing)
+            }
+            HStack {
+                Text("Opacity")
+                Slider(
+                    value: Binding(
+                        get: { link.appearance.opacity },
+                        set: { link.appearance.opacity = $0; onChange(link) }),
+                    in: 0.2...1)
+                Text("\(Int(link.appearance.opacity * 100)) %")
                     .font(.caption).monospacedDigit()
                     .frame(width: 48, alignment: .trailing)
             }
