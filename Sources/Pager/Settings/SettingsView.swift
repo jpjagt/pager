@@ -4,6 +4,7 @@ import PagerCore
 /// One shared settings window: all links with per-link options, then app-wide.
 struct SettingsView: View {
     @ObservedObject var store: LinkStore
+    @ObservedObject var updates: UpdateController
     var onAddPager: (() -> Void)?
     /// Returns false if no mail account is configured (so we can tell the user).
     var onEmailDebugReport: ((_ includeMessages: Bool) -> Bool)?
@@ -36,6 +37,9 @@ struct SettingsView: View {
                 }
 
                 Divider()
+                updatesSection
+
+                Divider()
                 debugSection
             }
             .padding(20)
@@ -52,6 +56,21 @@ struct SettingsView: View {
                 message: Text("This removes the pager from this device only. Your BFF keeps theirs."),
                 primaryButton: .destructive(Text("Unlink")) { store.remove(id: link.id) },
                 secondaryButton: .cancel())
+        }
+    }
+
+    private var updatesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Automatically check for updates", isOn: Binding(
+                get: { updates.automaticallyChecksForUpdates },
+                set: { updates.automaticallyChecksForUpdates = $0 }))
+            if updates.updateAvailable {
+                Button("Update available — install \(updates.availableVersion ?? "")") {
+                    updates.installUpdate()
+                }
+            } else {
+                Button("Check for Updates…") { updates.checkForUpdates() }
+            }
         }
     }
 

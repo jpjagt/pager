@@ -3,12 +3,20 @@ import PagerCore
 
 struct PopoverView: View {
     @ObservedObject var model: LinkViewModel
+    @ObservedObject var updates: UpdateController
     @FocusState private var focused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Spacer()
+                if updates.updateAvailable {
+                    Button { updates.installUpdate() } label: {
+                        Text("Update now").font(.caption).underline()
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                }
                 Button { model.onClose?() } label: {
                     Image(systemName: "chevron.up")
                 }

@@ -130,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let model = LinkViewModel(link: link, store: store, engine: engines[linkId])
         model.onClose = { [weak self] in self?.controllers[linkId]?.closePopover() }
         model.onOpenSettings = { [weak self] in self?.showSettings() }
-        return NSHostingController(rootView: PopoverView(model: model))
+        return NSHostingController(rootView: PopoverView(model: model, updates: updateController))
     }
 
     private lazy var addPagerWindow = WindowHost<AddPagerView>(
@@ -150,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func showSettings() {
         settingsWindow.show(SettingsView(
             store: store,
+            updates: updateController,
             onAddPager: { [weak self] in self?.showOnboarding() },
             onEmailDebugReport: { [weak self] includeMessages in
                 self?.sendDebugReport(includeMessages: includeMessages) ?? false
