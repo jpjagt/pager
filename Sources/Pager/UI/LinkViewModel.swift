@@ -2,46 +2,32 @@ import SwiftUI
 import Combine
 import PagerCore
 
-/// Bridges one link's store state + engine to SwiftUI.
+/// Thin SwiftUI bridge over `EditorSession`. Holds the private draft, mirrors
+/// the offline hint, and forwards edits/commit. Remote updates reach the menu
+/// bar through the store/engine path, not through this view model — a live
+/// draft is never overwritten.
 @MainActor
 final class LinkViewModel: ObservableObject {
     @Published var text: String
     @Published var showOfflineHint = false
-    @Published var detectedURLs: [TextUtil.URLMatch] = []
+    @Published var detectedURLs: [TextUtil.URLMatch]
 
     let linkId: UUID
-    private let store: LinkStore
+    private let session: EditorSession
     private let engine: SyncEngine?
     private var hintTask: Task<Void, Never>?
-    private var suppressNextEdit = false
-    private var dirty = false
-    private var cancellables: Set<AnyCancellable> = []
 
     var onOpenSettings: (() -> Void)?
     var onClose: (() -> Void)?
 
     init(link: PagerLink, store: LinkStore, engine: SyncEngine?) {
         self.linkId = link.id
-        self.store = store
         self.engine = engine
-        self.text = link.cachedText
-        self.detectedURLs = TextUtil.detectURLs(in: link.cachedText)
-
-        // Remote updates arriving while the popover is open.
-        store.$links
-            .receive(on: DispatchQueue.main)
-            .compactMap { $0.first(where: { $0.id == link.id })?.cachedText }
-            .removeDuplicates()
-            .sink { [weak self] newText in
-                Task { @MainActor in
-                    guard let self, newText != self.text else { return }
-                    self.suppressNextEdit = true
-                    self.dirty = false // remote won; nothing local left to push
-                    self.text = newText
-                    self.detectedURLs = TextUtil.detectURLs(in: newText)
-                }
-            }
-            .store(in: &cancellables)
+        // No engine (e.g. transport unavailable): commit is a no-op sink.
+        let committer: TextCommitter = engine ?? NoopCommitter()
+        self.session = EditorSession(linkId: link.id, store: store, committer: committer)
+        self.text = session.text
+        self.detectedURLs = session.detectedURLs
 
         engine?.onState = { [weak self] state in
             Task { @MainActor in self?.stateChanged(state) }
@@ -49,26 +35,17 @@ final class LinkViewModel: ObservableObject {
         if let engine { stateChanged(engine.state) }
     }
 
-    /// Called from the view's onChange. Updates local state only; the remote
-    /// push happens in commit() when the popover closes.
+    /// Called from the view's onChange. Keeps `detectedURLs`/cap in sync with
+    /// the session after it has processed the edit.
     func textEdited() {
-        if suppressNextEdit {
-            suppressNextEdit = false
-            return
-        }
-        if text.count > 500 { text = String(text.prefix(500)) }
-        detectedURLs = TextUtil.detectURLs(in: text)
-        dirty = true
-        let writtenAt = Int64(Date().timeIntervalSince1970 * 1000)
-        store.updateCachedText(id: linkId, text: text, writtenAt: writtenAt)
+        session.edit(text)
+        if text != session.text { text = session.text } // reflect the char cap
+        detectedURLs = session.detectedURLs
     }
 
-    /// Pushes edited text to the server. Called when the popover closes.
-    func commit() {
-        guard dirty else { return }
-        dirty = false
-        engine?.commitText(text)
-    }
+    /// Pushes the draft. Called from the popover-close event (AppDelegate wires
+    /// this to StatusItemController.popoverDidClose).
+    func commit() { session.commit() }
 
     /// Offline hint with a 2 s grace period so routine reconnects don't flash it.
     private func stateChanged(_ state: SyncEngine.State) {
@@ -83,4 +60,10 @@ final class LinkViewModel: ObservableObject {
             }
         }
     }
+}
+
+/// Used when there is no engine: edits are held locally, commit goes nowhere.
+@MainActor
+private final class NoopCommitter: TextCommitter {
+    func commitText(_ text: String) {}
 }
