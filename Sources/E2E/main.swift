@@ -77,6 +77,41 @@ enum E2E {
         commitB(newer)
         check("LWW newer write wins on both ends", await waitUntil { aView == newer && bView == newer })
 
+        // 3b. EditorSession model: a draft stays private until commit; a remote
+        //     message updates the menu bar (cache) but never clobbers the draft.
+        //     This is the headless analogue of the popover open/type/close flow
+        //     and guards the commit-on-close bug.
+        let aSuite = "e2e-editor-\(UUID().uuidString)"
+        let aStore = LinkStore(defaults: UserDefaults(suiteName: aSuite)!)
+        let aLink = aStore.add(code: code)
+        aStore.updateCachedText(id: aLink.id, text: bView ?? "", writtenAt: 1)
+        let session = EditorSession(linkId: aLink.id, store: aStore, committer: a)
+
+        let draft = "draft-\(nonce())"
+        session.edit(draft)
+        // Draft is private: server, B's view, and A's cache are all untouched.
+        let serverBefore = try? await transport.get(pathId: pathId)
+        check("draft does not reach the server",
+              serverBefore.flatMap { crypto.decrypt($0.ct) } != draft)
+        check("draft does not reach B", bView != draft)
+        check("draft does not touch A's menu-bar cache",
+              aStore.links.first?.cachedText != draft)
+
+        // While A holds the draft, B sends — it updates A's menu-bar cache but
+        // not the draft.
+        let interrupt = "interrupt-\(nonce())"
+        commitB(interrupt)
+        check("B's message reaches the server", await serverHas(interrupt, transport: transport, crypto: crypto, pathId: pathId))
+        aStore.updateCachedText(id: aLink.id, text: interrupt, writtenAt: 2) // engine.onText analogue
+        check("remote updates A's menu bar", aStore.links.first?.cachedText == interrupt)
+        check("remote does not clobber A's draft", session.text == draft)
+
+        // Closing the popover commits: the draft now propagates to B.
+        session.commit()
+        check("commit-on-close propagates the draft to B", await waitUntil { bView == draft })
+        check("commit updates A's own menu-bar cache", aStore.links.first?.cachedText == draft)
+        UserDefaults().removePersistentDomain(forName: aSuite)
+
         // 4. Reconnect: B misses a write while its stream is down, then catches
         //    up from SSE state replay on reconnect.
         b.stop(); bView = nil
