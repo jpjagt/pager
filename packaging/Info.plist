@@ -22,6 +22,8 @@
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>july.dev</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
     <key>SUFeedURL</key>
     <string>https://july.dev/pager/appcast.xml</string>
     <key>SUPublicEDKey</key>

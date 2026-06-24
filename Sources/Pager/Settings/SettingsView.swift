@@ -15,61 +15,58 @@ struct SettingsView: View {
     @State private var showNoMailAlert = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach(store.links) { link in
-                    LinkSettingsRow(
-                        link: link,
-                        onChange: { store.updateMeta(id: $0.id, nickname: $0.nickname, appearance: $0.appearance) },
-                        onUnlink: { confirmUnlink = link })
-                    Divider()
-                }
-
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { value in
-                        LaunchAtLogin.set(value)
-                        launchAtLogin = LaunchAtLogin.isEnabled
-                    }
-                HStack {
-                    Button("Add a pager…") { onAddPager?() }
-                    Spacer()
-                    Button("Quit Pager") { NSApp.terminate(nil) }
-                }
-
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(store.links) { link in
+                LinkSettingsRow(
+                    link: link,
+                    onChange: { store.updateMeta(id: $0.id, nickname: $0.nickname, appearance: $0.appearance) },
+                    onUnlink: { confirmUnlink = link })
                 Divider()
-                updatesSection
-
-                Divider()
-                debugSection
             }
-            .padding(20)
+
+            Button("add a pager…") { onAddPager?() }
+
+            Divider()
+            settingsSection
+
+            Divider()
+            debugSection
         }
-        .frame(width: 440, height: 420)
-        .alert("No mail account configured", isPresented: $showNoMailAlert) {
-            Button("OK", role: .cancel) {}
+        .padding(20)
+        .frame(width: 440)
+        .alert("no mail account configured", isPresented: $showNoMailAlert) {
+            Button("ok", role: .cancel) {}
         } message: {
-            Text("Set up Mail (or another mail app) to send a debug report, or contact \(PagerConfig.supportEmail) directly.")
+            Text("set up Mail (or another mail app) to send a debug report, or contact \(PagerConfig.supportEmail) directly.")
         }
         .alert(item: $confirmUnlink) { link in
             Alert(
-                title: Text("Unlink \(link.nickname)?"),
-                message: Text("This removes the pager from this device only. Your BFF keeps theirs."),
-                primaryButton: .destructive(Text("Unlink")) { store.remove(id: link.id) },
+                title: Text("unlink \(link.nickname)?"),
+                message: Text("this removes the pager from this device only. your BFF keeps theirs."),
+                primaryButton: .destructive(Text("unlink")) { store.remove(id: link.id) },
                 secondaryButton: .cancel())
         }
     }
 
-    private var updatesSection: some View {
+    private var settingsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle("Automatically check for updates", isOn: Binding(
-                get: { updates.automaticallyChecksForUpdates },
-                set: { updates.automaticallyChecksForUpdates = $0 }))
+            Text("settings").font(.headline)
+            Toggle("launch at login", isOn: $launchAtLogin)
+                .onChange(of: launchAtLogin) { value in
+                    LaunchAtLogin.set(value)
+                    launchAtLogin = LaunchAtLogin.isEnabled
+                }
+            Toggle("automatically check for updates", isOn: $updates.automaticallyChecksForUpdates)
             if updates.updateAvailable {
-                Button("Update available — install \(updates.availableVersion ?? "")") {
+                Button("update available — install \(updates.availableVersion ?? "")") {
                     updates.installUpdate()
                 }
             } else {
-                Button("Check for Updates…") { updates.checkForUpdates() }
+                Button("check for updates…") { updates.checkForUpdates() }
+            }
+            HStack {
+                Button("quit pager") { NSApp.terminate(nil) }
+                Spacer()
             }
         }
     }
@@ -82,10 +79,10 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            Toggle("Include the messages that were sent and received on your pagers",
+            Toggle("include the messages that were sent and received on your pagers",
                    isOn: $includeMessages)
                 .font(.caption)
-            Button("Email a debug report") {
+            Button("email a debug report") {
                 if onEmailDebugReport?(includeMessages) == false { showNoMailAlert = true }
             }
         }
@@ -100,25 +97,25 @@ private struct LinkSettingsRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                TextField("Nickname", text: $link.nickname)
+                TextField("nickname", text: $link.nickname)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 160)
                     .onSubmit { onChange(link) }
                 Spacer()
-                Button("Unlink", role: .destructive) { onUnlink() }
+                Button("unlink", role: .destructive) { onUnlink() }
             }
             HStack(spacing: 8) {
                 Text(link.shareCode.display)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
-                Button("Copy code") {
+                Button("copy code") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(link.shareCode.display, forType: .string)
                 }
                 .controlSize(.small)
             }
             HStack {
-                Text("Max width")
+                Text("max width")
                 Slider(
                     value: Binding(
                         get: { link.appearance.maxWidth },
@@ -129,7 +126,7 @@ private struct LinkSettingsRow: View {
                     .frame(width: 48, alignment: .trailing)
             }
             HStack {
-                Text("Text size")
+                Text("text size")
                 Slider(
                     value: Binding(
                         get: { link.appearance.fontSize },
@@ -140,7 +137,7 @@ private struct LinkSettingsRow: View {
                     .frame(width: 48, alignment: .trailing)
             }
             HStack {
-                Text("Opacity")
+                Text("opacity")
                 Slider(
                     value: Binding(
                         get: { link.appearance.opacity },
@@ -152,7 +149,7 @@ private struct LinkSettingsRow: View {
             }
             HStack {
                 ColorPicker(
-                    "Color",
+                    "color",
                     selection: Binding(
                         get: {
                             Color(nsColor: link.appearance.colorHex
@@ -163,7 +160,7 @@ private struct LinkSettingsRow: View {
                             onChange(link)
                         }),
                     supportsOpacity: false)
-                Button("Default color") {
+                Button("default color") {
                     link.appearance.colorHex = nil
                     onChange(link)
                 }

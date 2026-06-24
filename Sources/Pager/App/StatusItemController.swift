@@ -7,6 +7,11 @@ final class StatusItemController: NSObject {
     let linkId: UUID
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
+    /// A 1pt sliver pinned to the button's right edge (flexible left margin).
+    /// The popover anchors to this instead of the button: as the title widens
+    /// the button grows leftward, but this view stays put in screen space, so
+    /// the popover tracks the right edge and doesn't drift while typing.
+    private let anchorView = NSView()
     var makePopoverContent: (() -> NSViewController)?
 
     init(linkId: UUID) {
@@ -17,6 +22,10 @@ final class StatusItemController: NSObject {
         popover.animates = false
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
+        if let button = statusItem.button {
+            anchorView.autoresizingMask = [.minXMargin] // stick to the right edge
+            button.addSubview(anchorView)
+        }
     }
 
     func render(text: String, prefs: AppearancePrefs) {
@@ -63,7 +72,10 @@ final class StatusItemController: NSObject {
             popover.performClose(nil)
         } else if let button = statusItem.button {
             popover.contentViewController = makePopoverContent?()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            // Park the anchor at the current right edge; autoresizing keeps it
+            // there as the button resizes during editing.
+            anchorView.frame = NSRect(x: button.bounds.maxX - 1, y: 0, width: 1, height: button.bounds.height)
+            popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKey()
         }
     }

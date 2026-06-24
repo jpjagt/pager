@@ -6,6 +6,7 @@ struct AddPagerView: View {
     let isOnboarding: Bool
     let store: LinkStore
     let transport: SyncTransport?
+    @ObservedObject var updates: UpdateController
     var onDone: (() -> Void)?
 
     @State private var screen: Screen = .landing
@@ -93,6 +94,8 @@ struct AddPagerView: View {
                         LaunchAtLogin.set(value)
                         launchAtLogin = LaunchAtLogin.isEnabled
                     }
+                Toggle("Automatically check for updates (recommended)",
+                       isOn: $updates.automaticallyChecksForUpdates)
             }
         }
     }
@@ -263,26 +266,21 @@ struct AddPagerView: View {
         s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private func makeActions() -> PagerActions? {
+        transport.map { PagerActions(transport: $0, store: store) }
+    }
+
     private func create() {
-        guard let transport else {
+        guard let actions = makeActions() else {
             errorText = "Pager is not configured with a database URL."
             return
         }
         busy = true
         errorText = nil
-        let code = generated
-        let crypto = PagerCrypto(code: code)
-        let deviceId = store.deviceId
         Task { @MainActor in
             defer { busy = false }
             do {
-                // Initial empty node so joiners can verify the code exists.
-                let value = PagerValue(
-                    ct: try crypto.encrypt(""),
-                    writtenAt: Int64(Date().timeIntervalSince1970 * 1000),
-                    updatedBy: deviceId)
-                try await transport.put(pathId: crypto.pathId, value: value)
-                createdLinkId = store.add(code: code).id
+                createdLinkId = try await actions.createPager(code: generated).id
                 screen = .invite
             } catch {
                 errorText = "Could not reach the server. Check your connection and try again."
@@ -301,7 +299,7 @@ struct AddPagerView: View {
         Task { @MainActor in
             defer { busy = false }
             do {
-                try await send(text: message, code: generated, linkId: linkId)
+                try await makeActions()?.send(text: message, code: generated, linkId: linkId)
                 onDone?()
             } catch {
                 errorText = "Could not send — check your connection and try again."
@@ -310,36 +308,28 @@ struct AddPagerView: View {
     }
 
     private func join() {
-        guard let code = ShareCode.parse(joinInput) else { return }
-        guard !store.links.contains(where: { $0.code == code.full }) else {
-            errorText = "You already have this pager."
-            return
-        }
-        guard let transport else {
+        guard ShareCode.parse(joinInput) != nil else { return }
+        guard let actions = makeActions() else {
             errorText = "Pager is not configured with a database URL."
             return
         }
         busy = true
         errorText = nil
-        let crypto = PagerCrypto(code: code)
         Task { @MainActor in
             defer { busy = false }
             do {
-                guard let value = try await transport.get(pathId: crypto.pathId) else {
-                    errorText = "No pager exists for this code. Ask your BFF to re-send it."
-                    return
-                }
-                let link = store.add(code: code)
-                joinedCode = code
-                joinedLinkId = link.id
-                // The friend may not have written anything yet — show the
-                // joined screen either way, never block on it.
-                let text = crypto.decrypt(value.ct) ?? ""
-                friendMessage = text.isEmpty ? nil : text
-                if !text.isEmpty {
-                    store.updateCachedText(id: link.id, text: text, writtenAt: value.writtenAt)
-                }
+                let result = try await actions.joinPager(joinInput)
+                joinedCode = result.link.shareCode
+                joinedLinkId = result.link.id
+                friendMessage = result.friendMessage
                 screen = .joined
+            } catch PagerActionError.alreadyLinked {
+                errorText = "You already have this pager."
+            } catch PagerActionError.nodeNotFound {
+                errorText = "No pager exists for this code. Ask your BFF to re-send it."
+            } catch PagerActionError.invalidCode {
+                // The button only appears once the code parses, so this is rare.
+                errorText = "That code doesn't look right — check for typos."
             } catch {
                 errorText = "Could not reach the server. Check your connection and try again."
             }
@@ -354,24 +344,11 @@ struct AddPagerView: View {
         Task { @MainActor in
             defer { busy = false }
             do {
-                try await send(text: message, code: code, linkId: linkId)
+                try await makeActions()?.send(text: message, code: code, linkId: linkId)
                 onDone?()
             } catch {
                 errorText = "Could not send — check your connection and try again."
             }
         }
-    }
-
-    private struct SendFailed: Error {}
-
-    private func send(text: String, code: ShareCode, linkId: UUID) async throws {
-        guard let transport else { throw SendFailed() }
-        let crypto = PagerCrypto(code: code)
-        let value = PagerValue(
-            ct: try crypto.encrypt(text),
-            writtenAt: Int64(Date().timeIntervalSince1970 * 1000),
-            updatedBy: store.deviceId)
-        try await transport.put(pathId: crypto.pathId, value: value)
-        store.updateCachedText(id: linkId, text: text, writtenAt: value.writtenAt)
     }
 }

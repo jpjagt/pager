@@ -2,28 +2,34 @@ import AppKit
 import Sparkle
 
 /// Thin shell over Sparkle's updater — the only code that touches Sparkle.
-/// Owns the single updater instance, suppresses Sparkle's modal alert for
-/// background-found updates (gentle reminders), and publishes update state to
-/// the UI. Sparkle invokes its user-driver delegate on the main thread, and
-/// AppDelegate constructs this on the main thread, so @Published mutations are
-/// main-thread safe without extra hops.
-final class UpdateController: NSObject, ObservableObject, SPUStandardUserDriverDelegate {
+/// Owns the single updater instance, suppresses Sparkle's first-launch
+/// permission prompt (we offer the choice in onboarding instead), suppresses
+/// the modal alert for background-found updates (gentle reminders), and
+/// publishes update state to the UI. Sparkle invokes its delegates on the main
+/// thread, and AppDelegate constructs this on the main thread, so @Published
+/// mutations are main-thread safe without extra hops.
+final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate,
+    SPUStandardUserDriverDelegate {
     /// True once a *background* check has found an update (manual checks keep
     /// Sparkle's standard UI and do not set this).
     @Published private(set) var updateAvailable = false
     @Published private(set) var availableVersion: String?
+
+    /// Mirrors Sparkle's automatic-check pref. Stored + @Published so the
+    /// onboarding/settings toggles re-render when flipped; writes through to
+    /// the updater.
+    @Published var automaticallyChecksForUpdates = true {
+        didSet { updaterController?.updater.automaticallyChecksForUpdates = automaticallyChecksForUpdates }
+    }
 
     private var updaterController: SPUStandardUpdaterController!
 
     override init() {
         super.init()
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: true, updaterDelegate: nil, userDriverDelegate: self)
-    }
-
-    var automaticallyChecksForUpdates: Bool {
-        get { updaterController.updater.automaticallyChecksForUpdates }
-        set { updaterController.updater.automaticallyChecksForUpdates = newValue }
+            startingUpdater: true, updaterDelegate: self, userDriverDelegate: self)
+        // Reflect the persisted / Info.plist default (SUEnableAutomaticChecks).
+        automaticallyChecksForUpdates = updaterController.updater.automaticallyChecksForUpdates
     }
 
     /// Manual "Check for Updates…" — shows Sparkle's standard UI.
@@ -34,6 +40,14 @@ final class UpdateController: NSObject, ObservableObject, SPUStandardUserDriverD
     /// download → verify → install → relaunch). Same call as a manual check;
     /// Sparkle resurfaces the already-found update.
     func installUpdate() { updaterController.updater.checkForUpdates() }
+
+    // MARK: SPUUpdaterDelegate
+
+    /// Suppress Sparkle's first-launch "check automatically?" dialog — we ask
+    /// in onboarding instead, so the choice lives with Launch at Login.
+    func updaterShouldPromptForPermissionToCheck(forUpdates updater: SPUUpdater) -> Bool {
+        false
+    }
 
     // MARK: SPUStandardUserDriverDelegate — gentle reminders
 

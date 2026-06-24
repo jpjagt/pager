@@ -141,11 +141,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isOnboarding: store.links.isEmpty,
             store: store,
             transport: transport,
+            updates: updateController,
             onDone: { [weak self] in self?.addPagerWindow.close() }))
     }
 
     private lazy var settingsWindow = WindowHost<SettingsView>(
-        title: "Pager Settings", size: NSSize(width: 440, height: 420))
+        title: "Pager Settings", size: NSSize(width: 440, height: 420), autoSize: true)
 
     func showSettings() {
         settingsWindow.show(SettingsView(

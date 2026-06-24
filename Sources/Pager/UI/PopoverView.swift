@@ -8,7 +8,7 @@ struct PopoverView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 4) {
                 Spacer()
                 if updates.updateAvailable {
                     Button { updates.installUpdate() } label: {
@@ -19,15 +19,19 @@ struct PopoverView: View {
                 }
                 Button { model.onClose?() } label: {
                     Image(systemName: "chevron.up")
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 Menu {
-                    Button("Settings…") { model.onOpenSettings?() }
+                    Button("settings…") { model.onOpenSettings?() }
                     Divider()
-                    Button("Quit Pager") { NSApp.terminate(nil) }
+                    Button("quit pager") { NSApp.terminate(nil) }
                 } label: {
                     Image(systemName: "ellipsis")
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
@@ -36,12 +40,12 @@ struct PopoverView: View {
                 .fixedSize()
             }
 
-            TextField("Type something…", text: $model.text, axis: .vertical)
+            TextField("type a message…", text: $model.text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 18))
-                .lineLimit(1...5)
                 .focused($focused)
                 .onChange(of: model.text) { _ in model.textEdited() }
+                .onSubmit { model.onClose?() } // Enter commits + closes the popover
 
             if !model.detectedURLs.isEmpty {
                 HStack(spacing: 12) {

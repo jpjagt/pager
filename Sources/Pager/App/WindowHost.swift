@@ -7,10 +7,14 @@ final class WindowHost<Content: View> {
     private var window: NSWindow?
     private let title: String
     private let size: NSSize
+    private let autoSize: Bool
 
-    init(title: String, size: NSSize) {
+    /// `autoSize` lets the window track the SwiftUI content's ideal height
+    /// (set a fixed width on the content; height stays intrinsic).
+    init(title: String, size: NSSize, autoSize: Bool = false) {
         self.title = title
         self.size = size
+        self.autoSize = autoSize
     }
 
     func show(_ content: Content) {
@@ -24,7 +28,9 @@ final class WindowHost<Content: View> {
             window.center()
             self.window = window
         }
-        window?.contentViewController = NSHostingController(rootView: content)
+        let hosting = NSHostingController(rootView: content)
+        if autoSize { hosting.sizingOptions = [.preferredContentSize] }
+        window?.contentViewController = hosting
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
