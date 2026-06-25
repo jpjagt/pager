@@ -101,6 +101,15 @@ enum Flows {
         }
         check("B's reply reaches A live", await E2E.waitUntil { a.received[link.id] == "reply-yo" })
 
+        // A single commit (popover close) propagates without a second nudge.
+        let aReply = "a-reply-\(UUID().uuidString.prefix(6))"
+        try? await a.actions.send(text: String(aReply), code: code, linkId: link.id)
+        if let bLinkId = b.store.links.first?.id {
+            check("A's single commit reaches B live", await E2E.waitUntil { b.received[bLinkId] == String(aReply) })
+        } else {
+            check("A's single commit reaches B live", false)
+        }
+
         // 5. Unlink removes local state only; the node stays for the friend.
         a.disconnect()
         a.store.remove(id: link.id)
