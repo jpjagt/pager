@@ -66,6 +66,5 @@ struct PopoverView: View {
         .padding(16)
         .frame(width: 360)
         .onAppear { focused = true }
-        .onDisappear { model.commit() } // fires on both close paths: button and click-away
     }
 }

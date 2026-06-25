@@ -3,7 +3,7 @@ import PagerCore
 
 /// Owns one NSStatusItem + its popover for one link.
 @MainActor
-final class StatusItemController: NSObject {
+final class StatusItemController: NSObject, NSPopoverDelegate {
     let linkId: UUID
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
@@ -13,11 +13,15 @@ final class StatusItemController: NSObject {
     /// the popover tracks the right edge and doesn't drift while typing.
     private let anchorView = NSView()
     var makePopoverContent: (() -> NSViewController)?
+    /// Fired when the popover actually closes (chevron, Enter, or click-away).
+    /// AppDelegate wires this to the current editor's commit().
+    var onClose: (() -> Void)?
 
     init(linkId: UUID) {
         self.linkId = linkId
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
+        popover.delegate = self
         popover.behavior = .transient
         popover.animates = false
         statusItem.button?.target = self
@@ -81,6 +85,10 @@ final class StatusItemController: NSObject {
     }
 
     func closePopover() { popover.performClose(nil) }
+
+    func popoverDidClose(_ notification: Notification) {
+        onClose?()
+    }
 
     func removeFromStatusBar() {
         NSStatusBar.system.removeStatusItem(statusItem)

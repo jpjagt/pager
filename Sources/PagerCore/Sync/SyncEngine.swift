@@ -4,7 +4,7 @@ import Foundation
 /// LWW conflict resolution, echo suppression, and reconnect/backoff.
 /// All callbacks fire on the main actor.
 @MainActor
-public final class SyncEngine {
+public final class SyncEngine: TextCommitter {
     public enum State: Equatable {
         case connected
         case reconnecting

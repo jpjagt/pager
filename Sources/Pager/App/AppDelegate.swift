@@ -130,6 +130,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let model = LinkViewModel(link: link, store: store, engine: engines[linkId])
         model.onClose = { [weak self] in self?.controllers[linkId]?.closePopover() }
         model.onOpenSettings = { [weak self] in self?.showSettings() }
+        // Commit the draft when the popover actually closes (any dismissal path).
+        controllers[linkId]?.onClose = { [weak model] in model?.commit() }
         return NSHostingController(rootView: PopoverView(model: model, updates: updateController))
     }
 

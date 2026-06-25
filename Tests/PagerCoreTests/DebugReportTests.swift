@@ -15,7 +15,7 @@ final class DebugReportTests: XCTestCase {
         let without = r.body(includeMessages: false)
         XCTAssertFalse(without.contains("5NDQ-WHM1-85X3-FWPQ"))
         XCTAssertTrue(without.contains("Pager version: 1.0.0 (build 1)"))
-        XCTAssertTrue(without.contains("path 2aaf9352"))
+        XCTAssertTrue(without.contains("path=2aaf9352"))
 
         let with = r.body(includeMessages: true)
         XCTAssertTrue(with.contains("Pager codes"))
