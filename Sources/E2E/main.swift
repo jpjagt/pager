@@ -1,5 +1,8 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import PagerCore
+import UniformTypeIdentifiers
 
 // End-to-end test of the real sync path: two SyncEngine "devices" talking
 // through the live FirebaseClient (SSE + PUT), the layer the unit tests stub.
@@ -42,12 +45,14 @@ enum E2E {
         // manually — mirroring how the real editor holds locally-typed text.
         var aView: String?
         var bView: String?
+        var aImage: Data?
+        var bImage: Data?
         let a = SyncEngine(transport: transport, crypto: crypto, pathId: pathId, deviceId: "E2E-A", log: logA)
-        a.onContent = { c, _ in aView = c.textValue }
+        a.onContent = { c, _ in aView = c.textValue; aImage = c.imageData }
         let b = SyncEngine(transport: transport, crypto: crypto, pathId: pathId, deviceId: "E2E-B", log: logB)
-        b.onContent = { c, _ in bView = c.textValue }
-        func commitA(_ t: String) { aView = t; a.commitText(t) }
-        func commitB(_ t: String) { bView = t; b.commitText(t) }
+        b.onContent = { c, _ in bView = c.textValue; bImage = c.imageData }
+        func commitA(_ t: String) { aView = t; aImage = nil; a.commitText(t) }
+        func commitB(_ t: String) { bView = t; bImage = nil; b.commitText(t) }
 
         a.start(); b.start()
 
@@ -120,6 +125,22 @@ enum E2E {
         check("write lands on server while B is offline", await serverHas(away, transport: transport, crypto: crypto, pathId: pathId))
         b.start()
         check("B catches up after reconnect (SSE replay)", await waitUntil(15) { bView == away })
+
+        // 6. Image content: A commits an image → B receives byte-identical
+        //    data; a text reply replaces it on both ends; text writes stay
+        //    typeless on the wire (back-compat with old clients).
+        let jpeg = try! ImageCodec.process(E2E.stripedPNG(width: 1400, height: 900))
+        a.commitContent(.image(jpeg))
+        check("A→B image propagation (byte-identical)", await waitUntil { bImage == jpeg })
+        let afterImage = "text-again-\(nonce())"
+        commitB(afterImage)
+        check("text replaces the image on both ends",
+              await waitUntil { aView == afterImage && bView == afterImage && bImage == nil })
+        // Raw node JSON for a text write must have no "type" key.
+        let rawReq = URLRequest(url: dbURL.appendingPathComponent("pagers/\(pathId).json"))
+        let rawJSON = (try? await URLSession.shared.data(for: rawReq).0).map {
+            String(decoding: $0, as: UTF8.self) } ?? ""
+        check("text nodes carry no type field (legacy shape)", !rawJSON.contains("\"type\""))
 
         a.stop(); b.stop()
 
@@ -215,6 +236,26 @@ enum E2E {
 
     static func nonce() -> String {
         String(UUID().uuidString.prefix(6))
+    }
+
+    /// Deterministic striped PNG (same idea as the unit tests' TestImageFactory).
+    static func stripedPNG(width: Int, height: Int) -> Data {
+        let ctx = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        for x in stride(from: 0, to: width, by: 16) {
+            let shade = CGFloat(x % 256) / 255
+            ctx.setFillColor(CGColor(red: shade, green: 1 - shade, blue: 0.5, alpha: 1))
+            ctx.fill(CGRect(x: x, y: 0, width: 16, height: height))
+        }
+        let image = ctx.makeImage()!
+        let out = NSMutableData()
+        let dest = CGImageDestinationCreateWithData(
+            out, UTType.png.identifier as CFString, 1, nil)!
+        CGImageDestinationAddImage(dest, image, nil)
+        CGImageDestinationFinalize(dest)
+        return out as Data
     }
 }
 

@@ -10,7 +10,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 text that is **shared and end-to-end encrypted** across all devices linked by a
 share code. Latest edit wins everywhere, instantly. No accounts, no auth, no
 server-readable data — just the share code, which is both the DB address and the
-encryption key.
+encryption key. A pager can also hold an E2E-encrypted image (dropped on the
+menu bar item or pasted in the popover), re-encoded to JPEG ≤ 600 KB and stored
+inline in the same node (`type: "img"`).
 
 - **Design spec (read first):** `docs/superpowers/specs/2026-06-11-bff-pager-design.md` — the authoritative description of share-code format, crypto derivation, sync protocol, LWW rules, and UX flows. The implementation tracks it closely.
 - **Implementation plan:** `docs/superpowers/plans/2026-06-11-pager.md`
@@ -97,7 +99,8 @@ headlessly. The only thing left for manual verification is pure presentation
 ### PagerCore layers
 
 - **`Crypto/`** — `ShareCode` (16-char Crockford-base32 generate/parse/checksum) and `PagerCrypto` (HKDF-SHA256 derivation of `pathId` + AES-256-GCM key, GCM encrypt/decrypt). The share code never leaves the device; the server only ever sees `pathId` (a one-way hash) and ciphertext.
-- **`Models/`** — `PagerLink` (a single shared note: code + derived path/key, local-only nickname, appearance prefs, cached text), `LinkStore` (owns all links, persists to `UserDefaults`, source of truth for UI), `PagerValue` (the wire/DB node shape: `ct`, `writtenAt`, `updatedAt`, `updatedBy`).
+- **`Models/`** — `PagerLink` (a single shared note: code + derived path/key, local-only nickname, appearance prefs, cached text), `LinkStore` (owns all links, persists to `UserDefaults`, source of truth for UI), `PagerValue` (the wire/DB node shape: `ct`, `writtenAt`, `updatedAt`, `updatedBy`, optional `type`), `ImageDiskCache` (decrypted image bytes cached on disk, one file per link — `UserDefaults` holds only `cachedIsImage`).
+- **`Images/`** — `ImageCodec` (ImageIO downscale/JPEG-encode to ≤ 600 KB), `ImageDisplayMath` (9:16-clamped display boxes), `DropPayloadClassifier` (drop/paste contents → image|text decision), `ImageURLPreviewLoader` (receiver-side lazy image-URL previews).
 - **`PagerActions.swift`** — the create/join/send flows (write initial node, code validation, node-existence check, persist, surface friend's waiting message), extracted from the SwiftUI views so they're testable headlessly. `AddPagerView` is a thin shell over it. Errors surface as `PagerActionError` (`invalidCode`/`alreadyLinked`/`nodeNotFound`/`network`).
 - **`Diagnostics/DebugReport.swift`** — `DebugReport` (pure email-body builder), `DebugReportFactory` (assembles one from `LinkStore` + engine states), and the `MailComposer`/`ComposedMail` seam (real `NSSharingService` impl lives in the app; tests/E2E capture the composed mail).
 - **`Sync/`** — `SyncEngine` (**one instance per link**; owns subscribe/write/reconnect/LWW), `SyncTransport` (protocol abstracting Firebase REST — this is the seam tests stub via `URLProtocol`), `FirebaseClient` (the real transport: PUT writes, SSE reads), `SSEParser` (Server-Sent Events line parser), `Backoff` (exponential 1s→30s), `SyncLog` (`SyncLogSink` protocol + `FileSyncLog` JSONL writer + `SyncLogEvent`).
@@ -111,7 +114,8 @@ edit, flush, and state change — logging is pure observation, no behavior
 change. The app wires a `FileSyncLog` writing JSONL to
 `~/Library/Logs/Pager/pager-logs.jsonl` (capped at 2 MB; restarts fresh, no
 rotation). **Log lines carry only ciphertext** (`ct`), never plaintext or the
-share code — same trust boundary as the server. Settings → "Email a debug
+share code — same trust boundary as the server. Image events log only `ct_len`
+(the ciphertext length), never the image ciphertext itself. Settings → "Email a debug
 report" builds a `DebugReport` via `DebugReportFactory` and hands it to a
 `MailComposer` (`SharingServiceMailComposer` → `NSSharingService(.composeEmail)`
 in the app; a captor in tests/E2E), attaching the log; an opt-in checkbox
@@ -131,6 +135,8 @@ Design: `docs/superpowers/specs/2026-06-23-sync-logging-design.md`.
 - **Echo suppression:** ignore incoming values whose `updatedBy` == this device's id.
 - **Encryption lives only at the network boundary.** Cached text is stored decrypted in `UserDefaults`; menu bar is never blank on launch without network.
 - **Nicknames are local-only and never synced.**
+- **A pager holds text OR an image, never both.** The wire discriminator is the optional `type` field (absent ⇒ text); the code discriminator is `PagerContent`, parsed once at the sync boundary.
+- **img log events carry `ct_len`, never the image ciphertext.**
 - Writes apply optimistically to the menu bar immediately; PUTs debounce ~300ms. Max text length 500 chars.
 
 ## Testing approach

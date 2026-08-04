@@ -6,6 +6,11 @@
    europe-west1). Start in **locked mode**.
 3. In the Rules tab, replace the contents with `firebase/rules.json` from
    this repo and publish.
+   > **Note (2026-08):** image support changed `firebase/rules.json` — nodes
+   > gained an optional `type` field and the `ct` length cap is now conditional
+   > (1,000,000 chars for `type: "img"`, 2048 otherwise). Databases set up
+   > before this must re-publish the rules from the repo, or image writes are
+   > rejected.
 4. Copy the database URL shown at the top of the Data tab, e.g.
    `https://bff-pager-default-rtdb.europe-west1.firebasedatabase.app`.
 5. Paste it into `Sources/PagerCore/PagerConfig.swift` as
