@@ -36,12 +36,13 @@ public final class FirebaseClient: SyncTransport, @unchecked Sendable {
     /// JSONSerialization (not Codable) so {".sv":"timestamp"} can be injected:
     /// the server replaces it with its own clock on write.
     static func putBody(for value: PagerValue) throws -> Data {
-        let object: [String: Any] = [
+        var object: [String: Any] = [
             "ct": value.ct,
             "writtenAt": value.writtenAt,
             "updatedBy": value.updatedBy,
             "updatedAt": [".sv": "timestamp"],
         ]
+        if let type = value.type { object["type"] = type }
         return try JSONSerialization.data(withJSONObject: object)
     }
 

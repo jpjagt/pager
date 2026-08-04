@@ -19,4 +19,18 @@ final class FirebaseClientTests: XCTestCase {
         XCTAssertEqual(obj["updatedBy"] as? String, "dev-1")
         XCTAssertEqual(obj["updatedAt"] as? [String: String], [".sv": "timestamp"])
     }
+
+    func testPutBodyOmitsTypeForText() throws {
+        let value = PagerValue(ct: "abc", writtenAt: 1, updatedBy: "dev")
+        let body = try FirebaseClient.putBody(for: value)
+        let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        XCTAssertNil(object["type"])
+    }
+
+    func testPutBodyIncludesTypeForImage() throws {
+        let value = PagerValue(ct: "abc", writtenAt: 1, updatedBy: "dev", type: "img")
+        let body = try FirebaseClient.putBody(for: value)
+        let object = try JSONSerialization.jsonObject(with: body) as! [String: Any]
+        XCTAssertEqual(object["type"] as? String, "img")
+    }
 }

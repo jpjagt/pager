@@ -7,12 +7,16 @@ public struct PagerValue: Equatable, Codable {
     public var writtenAt: Int64
     public var updatedBy: String
     public var updatedAt: Int64?
+    /// "img" for image nodes; nil/absent ⇒ text (back-compat).
+    public var type: String?
 
-    public init(ct: String, writtenAt: Int64, updatedBy: String, updatedAt: Int64? = nil) {
+    public init(ct: String, writtenAt: Int64, updatedBy: String, updatedAt: Int64? = nil,
+                type: String? = nil) {
         self.ct = ct
         self.writtenAt = writtenAt
         self.updatedBy = updatedBy
         self.updatedAt = updatedAt
+        self.type = type
     }
 }
 

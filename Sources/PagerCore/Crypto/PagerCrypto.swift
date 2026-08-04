@@ -32,4 +32,19 @@ public struct PagerCrypto {
         else { return nil }
         return String(data: plain, encoding: .utf8)
     }
+
+    /// Returns base64(nonce ‖ ciphertext ‖ tag) of raw bytes (image payloads).
+    public func encryptData(_ data: Data) throws -> String {
+        let sealed = try AES.GCM.seal(data, using: key)
+        return sealed.combined!.base64EncodedString()
+    }
+
+    /// nil on any corruption/tampering/wrong key — caller keeps last good content.
+    public func decryptData(_ ct: String) -> Data? {
+        guard let data = Data(base64Encoded: ct),
+              let box = try? AES.GCM.SealedBox(combined: data),
+              let plain = try? AES.GCM.open(box, using: key)
+        else { return nil }
+        return plain
+    }
 }
