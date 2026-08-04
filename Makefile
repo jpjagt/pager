@@ -5,7 +5,8 @@ BUILD := $(shell git rev-list --count HEAD 2>/dev/null || echo 0)
 SITE := /Users/jeroen/code/jpjagt/july.dev/public/pager
 SPARKLE_TOOLS := $(shell find .build/artifacts -path '*/Sparkle/bin' -type d 2>/dev/null | head -1)
 
-.PHONY: build bundle zip clean test release
+.PHONY: build bundle zip clean test release \
+        release-patch release-minor release-major _tag
 
 build:
 	swift build -c release --arch arm64 --arch x86_64
@@ -39,6 +40,40 @@ release: zip
 	cp $(DIST)/$(APP).zip $(SITE)/Pager.zip
 	cp $(DIST)/appcast.xml $(SITE)/appcast.xml
 	@echo "→ copied Pager.zip + appcast.xml to $(SITE)"
+	@echo "→ released $(VERSION)"
+
+# Bump the version, tag it, then release. The tag has to exist before the build
+# starts — VERSION is expanded when Make parses this file, so tagging inside a
+# single invocation would stamp the bundle with the *previous* version. Hence
+# the re-entry into a fresh Make.
+release-patch release-minor release-major:
+	@$(MAKE) --no-print-directory _tag BUMP=$(@:release-%=%)
+	@$(MAKE) --no-print-directory release
+
+_tag:
+	@branch=$$(git rev-parse --abbrev-ref HEAD); \
+	test "$$branch" = "main" || { echo "✗ on branch $$branch — releases are cut from main"; exit 1; }
+	@git diff --quiet HEAD -- || { \
+	  echo "✗ uncommitted changes — commit or stash first:"; \
+	  git diff --name-only HEAD -- | sed 's/^/    /'; exit 1; }
+	@existing=$$(git tag --points-at HEAD --list 'v[0-9]*'); \
+	test -z "$$existing" || { \
+	  echo "✗ HEAD is already tagged $$existing — commit first, or use bare 'make release'"; \
+	  exit 1; }
+	@last=$$(git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo v0.0.0); \
+	v=$${last#v}; \
+	maj=$$(echo $$v | cut -d. -f1); maj=$${maj:-0}; \
+	min=$$(echo $$v | cut -d. -f2); min=$${min:-0}; \
+	pat=$$(echo $$v | cut -d. -f3); pat=$${pat:-0}; \
+	case "$(BUMP)" in \
+	  major) maj=$$((maj + 1)); min=0; pat=0 ;; \
+	  minor) min=$$((min + 1)); pat=0 ;; \
+	  patch) pat=$$((pat + 1)) ;; \
+	  *) echo "✗ BUMP must be patch, minor or major"; exit 1 ;; \
+	esac; \
+	new="v$$maj.$$min.$$pat"; \
+	git tag -a "$$new" -m "Pager $$new"; \
+	echo "→ tagged $$last → $$new"
 
 clean:
 	rm -rf .build $(DIST)

@@ -28,6 +28,8 @@ swift test --filter ShareCodeTests/testRoundTrip   # one test method
 make build               # release, universal (arm64 + x86_64)
 make bundle              # build + assemble dist/Pager.app (ad-hoc codesigned)
 make zip                 # bundle + produce dist/Pager.zip
+make release             # zip + appcast + copy both to july.dev (no version bump)
+make release-patch       # bump vX.Y.Z, tag, then release — also -minor / -major
 make clean
 
 # Decode a user-submitted sync log (the ct fields are E2E-encrypted; the
@@ -52,15 +54,37 @@ instead. The remaining GUI last mile (real menu-bar item, popovers) is verified
 manually.
 
 There is no Xcode project — this is a **SwiftPM** package (`Package.swift`).
-Zero third-party dependencies; AppKit/SwiftUI/CryptoKit/Network only.
+Sparkle (auto-update) is the only third-party dependency; everything else is
+AppKit/SwiftUI/CryptoKit/Network.
 
 ### Publishing a release
 
-After `make zip`, publish the artifact to the july.dev site so the download link works:
+One command, from `main`, with a clean working tree:
 
 ```sh
-cp dist/Pager.zip /Users/jeroen/code/jpjagt/july.dev/public/pager/Pager.zip
+make release-patch       # v0.1.1 → v0.1.2
+make release-minor       # v0.1.1 → v0.2.0
+make release-major       # v0.1.1 → v1.0.0
 ```
+
+It computes the next version from the latest `v*` tag, creates an annotated tag,
+then re-enters Make to build → zip → generate the Sparkle appcast → copy
+`Pager.zip` + `appcast.xml` to `/Users/jeroen/code/jpjagt/july.dev/public/pager/`.
+The site still has to be deployed separately for users to see the update.
+
+The tag is **local only** — push it yourself (`git push origin vX.Y.Z`).
+
+The version string comes from git, not from a file: `VERSION` is
+`git describe --tags --always` and `CFBundleVersion` is the commit count. That's
+why bumping and building can't happen in one Make process — Make expands
+`VERSION` when it parses the Makefile, so the tag has to exist beforehand, and
+`release-*` re-invokes `$(MAKE) release` after tagging.
+
+Three guards abort before anything is tagged: releases must be cut from `main`;
+uncommitted tracked changes are refused (untracked files are ignored); and an
+already-tagged HEAD is refused, because two `v*` tags on one commit make
+`git describe` ambiguous and the bundle would get stamped with the wrong one.
+Use bare `make release` to re-publish the current tag without bumping.
 
 ## Architecture
 

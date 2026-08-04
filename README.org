@@ -1,0 +1,104 @@
+#+TITLE: Pager
+#+SUBTITLE: a shared, end-to-end encrypted note in your menu bar
+
+A macOS menu bar app (in the spirit of One Thing) showing a short text that is
+*shared and end-to-end encrypted* across every device linked by a share code.
+Latest edit wins everywhere, instantly. No accounts, no auth, no server-readable
+data — just the share code, which is both the database address and the
+encryption key.
+
+A pager can also hold an encrypted image: drop one on the menu bar item or paste
+it in the popover, and it is re-encoded to JPEG ≤ 600 KB and stored inline.
+
+* Install
+
+See [[file:docs/install.md][docs/install.md]], or grab the build from
+[[https://july.dev/pager][july.dev/pager]]. The app is not notarized yet, so the
+first launch needs a trip through *System Settings → Privacy & Security → Open
+Anyway*.
+
+* Development
+
+A pure SwiftPM package — there is no Xcode project. Sparkle (auto-update) is the
+only third-party dependency.
+
+#+begin_src sh
+swift build                                  # debug build
+swift test                                   # all tests — offline, deterministic
+swift test --filter ShareCodeTests           # one test class
+swift run e2e                                # live round-trip against real Firebase
+#+end_src
+
+~swift test~ stubs the network transport, so it never touches Firebase. The real
+round-trip and the app-level flows (create → join → converse → unlink) are
+covered by ~swift run e2e~, which is deliberately not part of the test suite —
+run it before shipping any sync or flow change.
+
+To decrypt a sync log someone mailed in (the log carries only ciphertext; the
+share code is the key):
+
+#+begin_src sh
+swift run decode-log --code ABCD-EFGH-JKLM-NPQR ~/Library/Logs/Pager/pager-logs.jsonl
+#+end_src
+
+* Building a bundle
+
+#+begin_src sh
+make build      # release build, universal (arm64 + x86_64)
+make bundle     # + assemble dist/Pager.app, ad-hoc codesigned
+make zip        # + produce dist/Pager.zip
+make clean
+#+end_src
+
+* Releasing
+
+One command, run from ~main~ with a clean working tree:
+
+#+begin_src sh
+make release-patch      # v0.1.1 -> v0.1.2
+make release-minor      # v0.1.1 -> v0.2.0
+make release-major      # v0.1.1 -> v1.0.0
+#+end_src
+
+Each one computes the next version from the latest ~v*~ tag, creates an
+annotated git tag, then builds → zips → generates the Sparkle appcast → copies
+~Pager.zip~ and ~appcast.xml~ into the july.dev site repo. Deploy that site
+separately for users to actually receive the update.
+
+Notes:
+
+- The tag is *local only*. Push it yourself: ~git push origin vX.Y.Z~.
+- The version is derived from git, never from a file in the repo —
+  ~CFBundleShortVersionString~ is ~git describe --tags~ and ~CFBundleVersion~ is
+  the commit count.
+- Three guards run before anything is tagged: the branch must be ~main~;
+  uncommitted tracked changes are refused (untracked files are ignored); and
+  HEAD must not already carry a ~v*~ tag, since two tags on one commit make
+  ~git describe~ ambiguous and the bundle would be stamped with the wrong one.
+- Bare ~make release~ re-publishes the current tag without bumping.
+
+* Layout
+
+Four SwiftPM targets:
+
+| Target       | What                                                          |
+|--------------+---------------------------------------------------------------|
+| ~PagerCore~  | All pure, testable logic — crypto, sync, models. No AppKit.    |
+| ~Pager~      | The AppKit/SwiftUI shell: menu bar item, popover, settings.    |
+| ~DecodeLog~  | CLI that decrypts a submitted sync log given the share code.   |
+| ~E2E~        | Live integration harness against real Firebase.               |
+
+The guiding rule: every decision lives in ~PagerCore~, and the views are
+deliberately dumb. That is what makes the app testable end-to-end without
+driving a GUI. If you find yourself adding logic to a view, it probably belongs
+in ~PagerCore~.
+
+* Docs
+
+- [[file:AGENTS.md][AGENTS.md]] — architecture, invariants, testing approach (read
+  this before changing anything)
+- [[file:docs/superpowers/specs/2026-06-11-bff-pager-design.md][Design spec]] —
+  share-code format, crypto derivation, sync protocol, LWW rules, UX flows
+- [[file:docs/superpowers/specs/2026-06-23-sync-logging-design.md][Sync logging design]]
+- [[file:docs/firebase-setup.md][docs/firebase-setup.md]] — one-time RTDB setup
+- [[file:docs/install.md][docs/install.md]] — end-user install instructions
