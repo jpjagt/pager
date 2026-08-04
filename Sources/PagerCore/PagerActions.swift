@@ -39,7 +39,8 @@ public final class PagerActions {
 
     public struct JoinResult {
         public let link: PagerLink
-        /// The friend's existing message, if they'd already written one.
+        /// The friend's existing text message, if any. nil for an image — the
+        /// menu bar thumbnail shows it.
         public let friendMessage: String?
     }
 
@@ -60,11 +61,18 @@ public final class PagerActions {
         }
         guard let node else { throw PagerActionError.nodeNotFound }
         let link = store.add(code: code)
-        let text = crypto.decrypt(node.ct) ?? ""
-        if !text.isEmpty {
-            store.updateCachedText(id: link.id, text: text, writtenAt: node.writtenAt)
+        let content = crypto.decryptContent(ct: node.ct, type: node.type) ?? .text("")
+        switch content {
+        case .text(let text) where !text.isEmpty:
+            store.updateCachedContent(id: link.id, content: content, writtenAt: node.writtenAt)
+            return JoinResult(link: link, friendMessage: text)
+        case .image:
+            // Cache it so the menu bar thumbnail appears right away; no text to surface.
+            store.updateCachedContent(id: link.id, content: content, writtenAt: node.writtenAt)
+            return JoinResult(link: link, friendMessage: nil)
+        default:
+            return JoinResult(link: link, friendMessage: nil)
         }
-        return JoinResult(link: link, friendMessage: text.isEmpty ? nil : text)
     }
 
     /// Encrypts and writes `text`, then caches it locally.

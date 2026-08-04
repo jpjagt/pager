@@ -92,6 +92,19 @@ final class PagerActionsTests: XCTestCase {
         XCTAssertEqual(store.links.first?.cachedText, "")
     }
 
+    func testJoinWithWaitingImageCachesItAndOmitsFriendMessage() async throws {
+        let code = ShareCode.generate()
+        let crypto = PagerCrypto(code: code)
+        let jpeg = try ImageCodec.process(TestImageFactory.png(width: 200, height: 150))
+        let sealed = try crypto.encryptContent(.image(jpeg))
+        transport.node = PagerValue(ct: sealed.ct, writtenAt: 9, updatedBy: "friend", type: sealed.type)
+
+        let result = try await actions.joinPager(code.display)
+        XCTAssertNil(result.friendMessage)
+        XCTAssertEqual(store.cachedContent(id: result.link.id), .image(jpeg))
+        XCTAssertEqual(store.links.first?.cachedWrittenAt, 9)
+    }
+
     func testSendEncryptsPutsAndCaches() async throws {
         let link = store.add(code: code)
         try await actions.send(text: "yo", code: code, linkId: link.id)
