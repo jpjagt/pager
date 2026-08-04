@@ -36,17 +36,38 @@ public struct PagerLink: Codable, Equatable, Identifiable {
     public var appearance: AppearancePrefs
     public var cachedText: String
     public var cachedWrittenAt: Int64
+    /// True when the cached content is an image (bytes live in ImageDiskCache;
+    /// cachedText is "" in that case).
+    public var cachedIsImage: Bool
 
     public var shareCode: ShareCode { ShareCode(entropy: String(code.prefix(14))) }
 
+    enum CodingKeys: String, CodingKey {
+        case id, code, nickname, appearance, cachedText, cachedWrittenAt, cachedIsImage
+    }
+
     public init(id: UUID = UUID(), code: String, nickname: String,
                 appearance: AppearancePrefs = AppearancePrefs(),
-                cachedText: String = "", cachedWrittenAt: Int64 = 0) {
+                cachedText: String = "", cachedWrittenAt: Int64 = 0,
+                cachedIsImage: Bool = false) {
         self.id = id
         self.code = code
         self.nickname = nickname
         self.appearance = appearance
         self.cachedText = cachedText
         self.cachedWrittenAt = cachedWrittenAt
+        self.cachedIsImage = cachedIsImage
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        code = try container.decode(String.self, forKey: .code)
+        nickname = try container.decode(String.self, forKey: .nickname)
+        appearance = try container.decode(AppearancePrefs.self, forKey: .appearance)
+        cachedText = try container.decode(String.self, forKey: .cachedText)
+        cachedWrittenAt = try container.decode(Int64.self, forKey: .cachedWrittenAt)
+        // Absent in links saved before image support.
+        cachedIsImage = try container.decodeIfPresent(Bool.self, forKey: .cachedIsImage) ?? false
     }
 }

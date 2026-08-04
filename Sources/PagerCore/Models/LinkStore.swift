@@ -12,9 +12,12 @@ public final class LinkStore: ObservableObject {
     @Published public private(set) var links: [PagerLink]
     public let deviceId: String
     private let defaults: UserDefaults
+    private let imageCache: ImageDiskCache
 
-    public init(defaults: UserDefaults = .standard) {
+    public init(defaults: UserDefaults = .standard,
+                imageCache: ImageDiskCache = ImageDiskCache()) {
         self.defaults = defaults
+        self.imageCache = imageCache
         if let existing = defaults.string(forKey: Keys.deviceId) {
             deviceId = existing
         } else {
@@ -42,6 +45,7 @@ public final class LinkStore: ObservableObject {
 
     public func remove(id: UUID) {
         links.removeAll { $0.id == id }
+        imageCache.remove(for: id)
         save()
     }
 
@@ -60,11 +64,35 @@ public final class LinkStore: ObservableObject {
         save()
     }
 
+    /// Text convenience over updateCachedContent (existing call sites keep working).
     public func updateCachedText(id: UUID, text: String, writtenAt: Int64) {
+        updateCachedContent(id: id, content: .text(text), writtenAt: writtenAt)
+    }
+
+    /// Single write path for cached content. Text clears any cached image;
+    /// an image empties cachedText and writes the bytes to disk.
+    public func updateCachedContent(id: UUID, content: PagerContent, writtenAt: Int64) {
         guard let index = links.firstIndex(where: { $0.id == id }) else { return }
-        links[index].cachedText = text
+        switch content {
+        case .text(let text):
+            links[index].cachedText = text
+            links[index].cachedIsImage = false
+            imageCache.remove(for: id)
+        case .image(let data):
+            links[index].cachedText = ""
+            links[index].cachedIsImage = true
+            imageCache.write(data, for: id)
+        }
         links[index].cachedWrittenAt = writtenAt
         save()
+    }
+
+    /// The cached content for a link (menu bar truth). Falls back to text if
+    /// the image file is missing (e.g. deleted by the OS).
+    public func cachedContent(id: UUID) -> PagerContent {
+        guard let link = links.first(where: { $0.id == id }) else { return .text("") }
+        if link.cachedIsImage, let data = imageCache.read(for: id) { return .image(data) }
+        return .text(link.cachedText)
     }
 
     private func save() {
