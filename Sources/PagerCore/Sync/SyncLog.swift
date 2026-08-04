@@ -22,6 +22,9 @@ public struct SyncLogEvent: Codable, Equatable {
     public var remoteBy: String?
     public var len: Int?
     public var ct: String?
+    /// Byte length of image ciphertext when `ct` itself is omitted (never log
+    /// image ciphertext — see `ctFields` in `SyncEngine`).
+    public var ctLen: Int?
     public var state: String?
     public var error: String?
 
@@ -31,13 +34,15 @@ public struct SyncLogEvent: Codable, Equatable {
         case remoteWa = "remote_wa"
         case lastWa = "last_wa"
         case remoteBy = "remote_by"
-        case len, ct, state, error
+        case len, ct
+        case ctLen = "ct_len"
+        case state, error
     }
 
     public init(ev: String, link: String? = nil, writtenAt: Int64? = nil,
                 pendingWa: Int64? = nil, remoteWa: Int64? = nil, lastWa: Int64? = nil,
                 remoteBy: String? = nil, len: Int? = nil, ct: String? = nil,
-                state: String? = nil, error: String? = nil, t: String? = nil) {
+                ctLen: Int? = nil, state: String? = nil, error: String? = nil, t: String? = nil) {
         self.ev = ev
         self.link = link
         self.writtenAt = writtenAt
@@ -47,6 +52,7 @@ public struct SyncLogEvent: Codable, Equatable {
         self.remoteBy = remoteBy
         self.len = len
         self.ct = ct
+        self.ctLen = ctLen
         self.state = state
         self.error = error
         self.t = t

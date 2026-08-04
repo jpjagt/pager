@@ -4,14 +4,14 @@ import Foundation
 /// LWW conflict resolution, echo suppression, and reconnect/backoff.
 /// All callbacks fire on the main actor.
 @MainActor
-public final class SyncEngine: TextCommitter {
+public final class SyncEngine: ContentCommitter {
     public enum State: Equatable {
         case connected
         case reconnecting
         case offline
     }
 
-    public var onText: ((String, Int64) -> Void)?
+    public var onContent: ((PagerContent, Int64) -> Void)?
     public var onState: ((State) -> Void)?
 
     public private(set) var state: State = .offline {
@@ -62,11 +62,17 @@ public final class SyncEngine: TextCommitter {
 
     private func event(_ ev: String, writtenAt: Int64? = nil, pendingWa: Int64? = nil,
                        remoteWa: Int64? = nil, lastWa: Int64? = nil, remoteBy: String? = nil,
-                       len: Int? = nil, ct: String? = nil, state: String? = nil,
+                       len: Int? = nil, ct: String? = nil, ctLen: Int? = nil, state: String? = nil,
                        error: String? = nil) {
         log.log(SyncLogEvent(ev: ev, link: linkTag, writtenAt: writtenAt, pendingWa: pendingWa,
                              remoteWa: remoteWa, lastWa: lastWa, remoteBy: remoteBy, len: len,
-                             ct: ct, state: state, error: error))
+                             ct: ct, ctLen: ctLen, state: state, error: error))
+    }
+
+    /// img ciphertext is ~800 KB — log its length, never its content (the 2 MB
+    /// log cap would blow instantly, and decode-log doesn't need it).
+    private static func ctFields(_ value: PagerValue) -> (ct: String?, ctLen: Int?) {
+        value.type == PagerContent.imageWireType ? (nil, value.ct.count) : (value.ct, nil)
     }
 
     public func start() {
@@ -105,17 +111,24 @@ public final class SyncEngine: TextCommitter {
         }
     }
 
-    /// Encrypts and flushes immediately, skipping the debounce — used when the
-    /// editor closes and the final text should reach the server right away.
-    public func commitText(_ text: String) {
-        guard let ct = try? crypto.encrypt(text) else { return }
+    /// Encrypts and flushes immediately, skipping the debounce — the single
+    /// commit point (popover close / menu-bar drop).
+    public func commitContent(_ content: PagerContent) {
+        guard let sealed = try? crypto.encryptContent(content) else { return }
         let writtenAt = now()
-        pending = PagerValue(ct: ct, writtenAt: writtenAt, updatedBy: deviceId)
-        event("edit.commit", writtenAt: writtenAt, len: text.count, ct: ct)
+        let value = PagerValue(ct: sealed.ct, writtenAt: writtenAt,
+                               updatedBy: deviceId, type: sealed.type)
+        pending = value
+        let fields = Self.ctFields(value)
+        event("edit.commit", writtenAt: writtenAt, len: content.sizeForLog,
+              ct: fields.ct, ctLen: fields.ctLen)
         debounceTask?.cancel()
         debounceTask = nil
         scheduleFlush()
     }
+
+    /// Text convenience (tests + e2e call sites).
+    public func commitText(_ text: String) { commitContent(.text(text)) }
 
     /// Test hook: inject a pending offline edit without scheduling a flush.
     public func simulatePendingForTesting(writtenAt: Int64, text: String) {
@@ -196,12 +209,15 @@ public final class SyncEngine: TextCommitter {
             return
         }
         lastApplied = remote
-        // Undecryptable (corrupt/tampered): keep last good text.
-        if let text = crypto.decrypt(remote.ct) {
-            event("apply.accept", writtenAt: remote.writtenAt, len: text.count, ct: remote.ct)
-            onText?(text, remote.writtenAt)
+        // Undecryptable (corrupt/tampered/not a decodable image): keep last good content.
+        let fields = Self.ctFields(remote)
+        if let content = crypto.decryptContent(ct: remote.ct, type: remote.type) {
+            event("apply.accept", writtenAt: remote.writtenAt, len: content.sizeForLog,
+                  ct: fields.ct, ctLen: fields.ctLen)
+            onContent?(content, remote.writtenAt)
         } else {
-            event("apply.undecryptable", writtenAt: remote.writtenAt, ct: remote.ct)
+            event("apply.undecryptable", writtenAt: remote.writtenAt,
+                  ct: fields.ct, ctLen: fields.ctLen)
         }
     }
 
@@ -224,7 +240,8 @@ public final class SyncEngine: TextCommitter {
         while epoch == flushEpoch, let value = pending, !Task.isCancelled {
             do {
                 try await transport.put(pathId: pathId, value: value)
-                event("flush.put_ok", writtenAt: value.writtenAt, ct: value.ct)
+                let fields = Self.ctFields(value)
+                event("flush.put_ok", writtenAt: value.writtenAt, ct: fields.ct, ctLen: fields.ctLen)
                 if pending == value {
                     pending = nil
                     lastApplied = value

@@ -37,7 +37,7 @@ final class Device {
             let engine = SyncEngine(transport: transport, crypto: crypto,
                                     pathId: crypto.pathId, deviceId: store.deviceId)
             let id = link.id
-            engine.onText = { [weak self] text, _ in self?.received[id] = text }
+            engine.onContent = { [weak self] content, _ in self?.received[id] = content.textValue }
             engines[id] = engine
             engine.start()
         }

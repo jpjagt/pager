@@ -24,7 +24,8 @@ final class FakeTransport: SyncTransport, @unchecked Sendable {
         let data: String
         if let node {
             let updatedAt = node.updatedAt.map(String.init) ?? "0"
-            data = #"{"path":"/","data":{"ct":"\#(node.ct)","writtenAt":\#(node.writtenAt),"updatedAt":\#(updatedAt),"updatedBy":"\#(node.updatedBy)"}}"#
+            let typeField = node.type.map { #","type":"\#($0)""# } ?? ""
+            data = #"{"path":"/","data":{"ct":"\#(node.ct)","writtenAt":\#(node.writtenAt),"updatedAt":\#(updatedAt),"updatedBy":"\#(node.updatedBy)"\#(typeField)}}"#
         } else {
             data = #"{"path":"/","data":null}"#
         }
@@ -51,7 +52,7 @@ final class SyncEngineTests: XCTestCase {
         engine = SyncEngine(
             transport: transport, crypto: crypto, pathId: "path", deviceId: "ME",
             now: { self.clock }, debounceMs: 0)
-        engine.onText = { text, _ in self.received.append(text) }
+        engine.onContent = { content, _ in self.received.append(content.textValue) }
         engine.onState = { self.states.append($0) }
         engine.start()
         try await Task.sleep(nanoseconds: 50_000_000) // let stream attach
@@ -169,5 +170,42 @@ final class SyncEngineTests: XCTestCase {
         try await Task.sleep(nanoseconds: 1_500_000_000)
         XCTAssertLessThanOrEqual(transport.putAttempts, attemptsBeforeStop + 1)
         XCTAssertTrue(transport.puts.isEmpty)
+    }
+
+    // Image node arrives → delivered as .image content.
+    func testImageNodeDeliveredAsContent() async throws {
+        let jpeg = try ImageCodec.process(TestImageFactory.png(width: 100, height: 80))
+        let sealed = try crypto.encryptContent(.image(jpeg))
+        var received: PagerContent?
+        engine.onContent = { content, _ in received = content }
+        transport.emit(node: PagerValue(ct: sealed.ct, writtenAt: 100, updatedBy: "other", type: sealed.type))
+        await settle()
+        XCTAssertEqual(received, .image(jpeg))
+    }
+
+    // img ct that decrypts to garbage → ignored, no delivery.
+    func testGarbageImageNodeIgnored() async throws {
+        let ct = try crypto.encryptData(Data("not a jpeg".utf8))
+        var received: PagerContent?
+        engine.onContent = { content, _ in received = content }
+        transport.emit(node: PagerValue(ct: ct, writtenAt: 100, updatedBy: "other", type: "img"))
+        await settle()
+        XCTAssertNil(received)
+    }
+
+    // commitContent(.image) → PUT carries type "img"; log has ct_len, not ct.
+    func testCommitImagePutsTypedValueAndLogsLengthOnly() async throws {
+        let recorder = RecordingSyncLog()
+        let engine = SyncEngine(
+            transport: transport, crypto: crypto, pathId: "path", deviceId: "ME",
+            now: { self.clock }, debounceMs: 0, log: recorder)
+        let jpeg = try ImageCodec.process(TestImageFactory.png(width: 100, height: 80))
+        engine.commitContent(.image(jpeg))
+        await settle()
+        XCTAssertEqual(transport.puts.last?.type, "img")
+        let commitEvents = recorder.events.filter { $0.ev == "edit.commit" }
+        XCTAssertFalse(commitEvents.isEmpty)
+        XCTAssertTrue(commitEvents.allSatisfy { $0.ct == nil && $0.ctLen != nil })
+        engine.stop()
     }
 }

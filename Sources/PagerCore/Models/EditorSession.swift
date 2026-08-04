@@ -3,8 +3,8 @@ import Foundation
 /// The commit seam. `SyncEngine` is the real implementation; tests/e2e inject a
 /// stub. Keeps `EditorSession` free of any network/engine internals.
 @MainActor
-public protocol TextCommitter: AnyObject {
-    func commitText(_ text: String)
+public protocol ContentCommitter: AnyObject {
+    func commitContent(_ content: PagerContent)
 }
 
 /// The pure editing logic behind the popover, extracted from `LinkViewModel` so
@@ -23,11 +23,11 @@ public final class EditorSession {
 
     private let linkId: UUID
     private let store: LinkStore
-    private let committer: TextCommitter
+    private let committer: ContentCommitter
     private let now: () -> Int64
     private var dirty = false
 
-    public init(linkId: UUID, store: LinkStore, committer: TextCommitter,
+    public init(linkId: UUID, store: LinkStore, committer: ContentCommitter,
                 now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }) {
         self.linkId = linkId
         self.store = store
@@ -58,7 +58,7 @@ public final class EditorSession {
     public func commit() {
         guard dirty else { return }
         dirty = false
-        committer.commitText(text)
+        committer.commitContent(.text(text))
         store.updateCachedText(id: linkId, text: text, writtenAt: now())
     }
 }

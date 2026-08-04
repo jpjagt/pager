@@ -2,9 +2,9 @@ import XCTest
 @testable import PagerCore
 
 /// Captures committed text instead of touching the network.
-final class StubCommitter: TextCommitter {
+final class StubCommitter: ContentCommitter {
     private(set) var committed: [String] = []
-    func commitText(_ text: String) { committed.append(text) }
+    func commitContent(_ content: PagerContent) { committed.append(content.textValue) }
 }
 
 @MainActor

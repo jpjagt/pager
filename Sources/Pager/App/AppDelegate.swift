@@ -114,8 +114,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let engine = SyncEngine(
             transport: transport, crypto: crypto,
             pathId: crypto.pathId, deviceId: store.deviceId, log: syncLog)
-        engine.onText = { [weak self] text, writtenAt in
-            self?.store.updateCachedText(id: linkId, text: text, writtenAt: writtenAt)
+        engine.onContent = { [weak self] content, writtenAt in
+            self?.store.updateCachedContent(id: linkId, content: content, writtenAt: writtenAt)
         }
         engines[link.id] = engine
         engine.start()

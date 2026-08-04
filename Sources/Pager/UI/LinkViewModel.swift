@@ -24,7 +24,7 @@ final class LinkViewModel: ObservableObject {
         self.linkId = link.id
         self.engine = engine
         // No engine (e.g. transport unavailable): commit is a no-op sink.
-        let committer: TextCommitter = engine ?? NoopCommitter()
+        let committer: ContentCommitter = engine ?? NoopCommitter()
         self.session = EditorSession(linkId: link.id, store: store, committer: committer)
         self.text = session.text
         self.detectedURLs = session.detectedURLs
@@ -64,6 +64,6 @@ final class LinkViewModel: ObservableObject {
 
 /// Used when there is no engine: edits are held locally, commit goes nowhere.
 @MainActor
-private final class NoopCommitter: TextCommitter {
-    func commitText(_ text: String) {}
+private final class NoopCommitter: ContentCommitter {
+    func commitContent(_ content: PagerContent) {}
 }

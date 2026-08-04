@@ -43,9 +43,9 @@ enum E2E {
         var aView: String?
         var bView: String?
         let a = SyncEngine(transport: transport, crypto: crypto, pathId: pathId, deviceId: "E2E-A", log: logA)
-        a.onText = { t, _ in aView = t }
+        a.onContent = { c, _ in aView = c.textValue }
         let b = SyncEngine(transport: transport, crypto: crypto, pathId: pathId, deviceId: "E2E-B", log: logB)
-        b.onText = { t, _ in bView = t }
+        b.onContent = { c, _ in bView = c.textValue }
         func commitA(_ t: String) { aView = t; a.commitText(t) }
         func commitB(_ t: String) { bView = t; b.commitText(t) }
 
