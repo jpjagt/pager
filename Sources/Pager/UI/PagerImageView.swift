@@ -1,9 +1,12 @@
 import SwiftUI
 import PagerCore
 
-/// Clickable image box shared by the draft image and the URL preview: aspect
-/// clamped to ≥ 9:16 (taller images letterbox on bars slightly darker than the
-/// popover background), pointer cursor + subtle dim on hover, optional ✕.
+/// Clickable image container shared by the draft image and the URL preview:
+/// always full width with a rounded 2pt border slightly lighter than the
+/// popover background, dark padding around the image, and the image itself at
+/// native (Retina) size — scaled down to fit, never up. Very tall images cap
+/// the container at 9:16 and center horizontally. Pointer cursor + subtle dim
+/// on hover, optional ✕.
 struct PagerImageView: View {
     let imageData: Data
     let onTap: () -> Void
@@ -11,20 +14,22 @@ struct PagerImageView: View {
     @State private var hovering = false
 
     /// Popover is 360pt wide with 16pt padding.
-    static let maxWidth: Double = 328
-    static let maxHeight: Double = 240
+    static let width: Double = 328
 
     var body: some View {
-        if let nsImage = NSImage(data: imageData) {
-            let box = ImageDisplayMath.boxSize(
-                imageSize: CGSize(width: nsImage.size.width, height: nsImage.size.height),
-                maxWidth: Self.maxWidth, maxHeight: Self.maxHeight)
+        if let pixelSize = ImageCodec.pixelSize(of: imageData),
+           let nsImage = NSImage(data: imageData) {
+            let layout = ImageDisplayMath.containerLayout(
+                imagePixelSize: pixelSize, containerWidth: Self.width)
             ZStack(alignment: .topTrailing) {
                 ZStack {
-                    Color.primary.opacity(0.06) // letterbox bars
+                    Color.black.opacity(0.25) // dark padding around the image
                     Image(nsImage: nsImage)
                         .resizable()
-                        .scaledToFit()
+                        .interpolation(.high)
+                        .frame(width: layout.imageSize.width, height: layout.imageSize.height)
+                        // Concentric with the container: 6pt outer − 3pt padding.
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
                     if hovering { Color.black.opacity(0.1) }
                 }
                 if hovering, let onClear {
@@ -37,8 +42,11 @@ struct PagerImageView: View {
                     .padding(6)
                 }
             }
-            .frame(width: box.width, height: box.height)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .frame(width: layout.containerSize.width, height: layout.containerSize.height)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 2))
             .contentShape(Rectangle())
             .onTapGesture(perform: onTap)
             .onHover { inside in

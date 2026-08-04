@@ -30,4 +30,59 @@ final class ImageDisplayMathTests: XCTestCase {
         XCTAssertEqual(ImageDisplayMath.boxSize(
             imageSize: CGSize(width: 10, height: 10), maxWidth: 0, maxHeight: 240), .zero)
     }
+
+    // MARK: containerLayout (popover: full-width padded container, native-size image)
+
+    func testContainerSmallImageDisplaysAtNativeSizeInMinHeightBox() {
+        // 40×40 px = 20×20 pt at Retina scale; container pads out to the 60pt floor.
+        let layout = ImageDisplayMath.containerLayout(
+            imagePixelSize: CGSize(width: 40, height: 40), containerWidth: 328)
+        XCTAssertEqual(layout.imageSize, CGSize(width: 20, height: 20))
+        XCTAssertEqual(layout.containerSize, CGSize(width: 328, height: 60))
+    }
+
+    func testContainerShortWideImageGetsMinHeight() {
+        // 300×50 px = 150×25 pt: fits at native size, 60pt height floor applies.
+        let layout = ImageDisplayMath.containerLayout(
+            imagePixelSize: CGSize(width: 300, height: 50), containerWidth: 328)
+        XCTAssertEqual(layout.imageSize, CGSize(width: 150, height: 25))
+        XCTAssertEqual(layout.containerSize.height, 60)
+    }
+
+    func testContainerWideImageScalesDownToContentWidth() {
+        // 2048×1024 px = 1024×512 pt natural → scaled to the 322pt content width.
+        let layout = ImageDisplayMath.containerLayout(
+            imagePixelSize: CGSize(width: 2048, height: 1024), containerWidth: 328)
+        XCTAssertEqual(layout.imageSize.width, 322, accuracy: 0.5)
+        XCTAssertEqual(layout.imageSize.height, 161, accuracy: 0.5)
+        XCTAssertEqual(layout.containerSize, CGSize(width: 328, height: layout.imageSize.height + 6))
+    }
+
+    func testContainerVeryTallImageClampedToNineSixteenBox() {
+        // 450×1800 px = 225×900 pt natural. The container is capped at 9:16
+        // (328 → 583.1pt tall); the image scales to fit the content height.
+        let layout = ImageDisplayMath.containerLayout(
+            imagePixelSize: CGSize(width: 450, height: 1800), containerWidth: 328)
+        let maxContainerHeight = 328.0 * 16.0 / 9.0
+        XCTAssertEqual(layout.containerSize.height, maxContainerHeight, accuracy: 0.5)
+        XCTAssertEqual(layout.imageSize.height, maxContainerHeight - 6, accuracy: 0.5)
+        XCTAssertLessThan(layout.imageSize.width, 328 - 6)
+    }
+
+    func testContainerNeverUpscales() {
+        // 200×100 px = 100×50 pt — displayed exactly at natural size.
+        let layout = ImageDisplayMath.containerLayout(
+            imagePixelSize: CGSize(width: 200, height: 100), containerWidth: 328)
+        XCTAssertEqual(layout.imageSize, CGSize(width: 100, height: 50))
+    }
+
+    func testContainerDegenerateInputsReturnZero() {
+        XCTAssertEqual(
+            ImageDisplayMath.containerLayout(imagePixelSize: .zero, containerWidth: 328),
+            ImageDisplayMath.ContainerLayout(containerSize: .zero, imageSize: .zero))
+        XCTAssertEqual(
+            ImageDisplayMath.containerLayout(
+                imagePixelSize: CGSize(width: 10, height: 10), containerWidth: 0),
+            ImageDisplayMath.ContainerLayout(containerSize: .zero, imageSize: .zero))
+    }
 }
