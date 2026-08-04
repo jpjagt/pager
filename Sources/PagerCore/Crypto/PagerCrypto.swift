@@ -47,4 +47,25 @@ public struct PagerCrypto {
         else { return nil }
         return plain
     }
+
+    /// Seals content for the wire: (ciphertext, type-field value). Text omits
+    /// the type field entirely (absent ⇒ text, back-compat).
+    public func encryptContent(_ content: PagerContent) throws -> (ct: String, type: String?) {
+        switch content {
+        case .text(let text): return (try encrypt(text), nil)
+        case .image(let data): return (try encryptData(data), PagerContent.imageWireType)
+        }
+    }
+
+    /// The single decrypt-and-parse boundary. nil on corruption/tampering,
+    /// non-UTF-8 text, or an img payload that is not a decodable image —
+    /// caller keeps last good content.
+    public func decryptContent(ct: String, type: String?) -> PagerContent? {
+        if type == PagerContent.imageWireType {
+            guard let data = decryptData(ct), ImageCodec.isDecodableImage(data) else { return nil }
+            return .image(data)
+        }
+        guard let text = decrypt(ct) else { return nil }
+        return .text(text)
+    }
 }
