@@ -16,6 +16,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// Fired when the popover actually closes (chevron, Enter, or click-away).
     /// AppDelegate wires this to the current editor's commit().
     var onClose: (() -> Void)?
+    private let dropView = StatusItemDropView()
+    /// Fired when something is dropped on the menu bar item. AppDelegate wires
+    /// this to an immediate edit+commit (no popover involved).
+    var onDropPayload: ((DropPayload) -> Void)?
 
     init(linkId: UUID) {
         self.linkId = linkId
@@ -29,6 +33,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if let button = statusItem.button {
             anchorView.autoresizingMask = [.minXMargin] // stick to the right edge
             button.addSubview(anchorView)
+            dropView.frame = button.bounds
+            dropView.autoresizingMask = [.width, .height]
+            dropView.onDrop = { [weak self] payload in self?.onDropPayload?(payload) }
+            button.addSubview(dropView)
         }
     }
 

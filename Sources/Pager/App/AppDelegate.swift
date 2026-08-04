@@ -110,6 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.makePopoverContent = { [weak self] in
             self?.popoverContent(for: linkId) ?? NSViewController()
         }
+        controller.onDropPayload = { [weak self] payload in
+            self?.handleDrop(payload, linkId: linkId)
+        }
         guard let transport else { return }
         let crypto = PagerCrypto(code: link.shareCode)
         let engine = SyncEngine(
@@ -120,6 +123,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         engines[link.id] = engine
         engine.start()
+    }
+
+    /// Drop on the menu bar item = edit + commit in one step. Dropping on the
+    /// shared line is deliberately "send this" — no popover, no draft.
+    private func handleDrop(_ payload: DropPayload, linkId: UUID) {
+        guard let engine = engines[linkId] else { NSSound.beep(); return }
+        let session = EditorSession(linkId: linkId, store: store, committer: engine)
+        switch payload {
+        case .image(let raw):
+            do { try session.setImage(raw) } catch { NSSound.beep(); return }
+        case .text(let text):
+            session.edit(text)
+        }
+        session.commit()
     }
 
     func engine(for id: UUID) -> SyncEngine? { engines[id] }
