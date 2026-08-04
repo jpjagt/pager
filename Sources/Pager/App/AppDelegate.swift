@@ -76,7 +76,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         for link in links {
             if controllers[link.id] == nil { addController(for: link) }
-            controllers[link.id]?.render(text: link.cachedText, prefs: link.appearance)
+            controllers[link.id]?.render(content: store.cachedContent(id: link.id),
+                                         prefs: link.appearance)
         }
         updatePlaceholder(visible: links.isEmpty)
         if links.isEmpty { showOnboarding() }

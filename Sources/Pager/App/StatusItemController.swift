@@ -32,8 +32,28 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         }
     }
 
-    func render(text: String, prefs: AppearancePrefs) {
+    func render(content: PagerContent, prefs: AppearancePrefs) {
+        switch content {
+        case .text(let text): renderText(text, prefs: prefs)
+        case .image(let data): renderImage(data, prefs: prefs)
+        }
+    }
+
+    private func renderImage(_ data: Data, prefs: AppearancePrefs) {
+        guard let button = statusItem.button,
+              let thumbnail = Self.thumbnail(from: data, maxWidth: prefs.maxWidth) else {
+            renderText("", prefs: prefs) // unreadable cache → placeholder 📟
+            return
+        }
+        button.attributedTitle = NSAttributedString(string: "")
+        button.image = thumbnail
+        button.imagePosition = .imageOnly
+    }
+
+    private func renderText(_ text: String, prefs: AppearancePrefs) {
         guard let button = statusItem.button else { return }
+        button.image = nil
+        button.imagePosition = .noImage
         let display = text.isEmpty
             ? "📟"
             : text.replacingOccurrences(of: "\n", with: " ")
@@ -69,6 +89,49 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             if candidate.size().width <= maxWidth { return candidate }
         }
         return ellipsis
+    }
+
+    // Thumbnail geometry: 2pt border in the OS menu-bar text color, 1pt gap,
+    // then the image (~16pt tall) — total 22pt, the status bar thickness.
+    static let thumbBorderWidth: CGFloat = 2
+    static let thumbBorderGap: CGFloat = 1
+    static let thumbInnerHeight: CGFloat = 16
+
+    /// Composes the bordered, aspect-clamped menu bar thumbnail. Drawn via a
+    /// drawingHandler so labelColor adapts to light/dark at draw time.
+    static func thumbnail(from data: Data, maxWidth: Double) -> NSImage? {
+        guard let source = NSImage(data: data),
+              source.size.width > 0, source.size.height > 0 else { return nil }
+        let inset = thumbBorderWidth + thumbBorderGap
+        let box = ImageDisplayMath.boxSize(
+            imageSize: CGSize(width: source.size.width, height: source.size.height),
+            maxWidth: max(Double(maxWidth) - 2 * Double(inset), 8),
+            maxHeight: Double(thumbInnerHeight))
+        guard box != .zero else { return nil }
+        let total = NSSize(width: box.width + 2 * inset, height: box.height + 2 * inset)
+        let image = NSImage(size: total, flipped: false) { rect in
+            let borderRect = rect.insetBy(dx: thumbBorderWidth / 2, dy: thumbBorderWidth / 2)
+            let border = NSBezierPath(roundedRect: borderRect, xRadius: 4, yRadius: 4)
+            border.lineWidth = thumbBorderWidth
+            NSColor.labelColor.setStroke()
+            border.stroke()
+            let boxRect = rect.insetBy(dx: inset, dy: inset)
+            let fitted = Self.fitRect(imageSize: source.size, in: boxRect)
+            NSBezierPath(roundedRect: fitted, xRadius: 2, yRadius: 2).setClip()
+            source.draw(in: fitted, from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+
+    /// Aspect-fit rect for an image centered in a box (letterbox bars stay
+    /// transparent — the menu bar background shows through).
+    static func fitRect(imageSize: NSSize, in box: NSRect) -> NSRect {
+        let scale = min(box.width / imageSize.width, box.height / imageSize.height)
+        let size = NSSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        return NSRect(x: box.midX - size.width / 2, y: box.midY - size.height / 2,
+                      width: size.width, height: size.height)
     }
 
     @objc private func togglePopover() {
