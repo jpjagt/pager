@@ -45,6 +45,11 @@ public final class ImageURLPreviewLoader: ObservableObject {
                 guard !Task.isCancelled else { return }
                 guard let data = try? await fetch(url),
                       ImageCodec.isDecodableImage(data) else { continue }
+                // Re-check after the await: a newer load(urls:) may have
+                // cancelled this task and already published its own result
+                // while we were suspended in fetch(url). Without this guard
+                // a slow, stale fetch could overwrite a fresher preview.
+                guard !Task.isCancelled else { return }
                 Self.store(data, for: url)
                 preview = Preview(url: url, data: data)
                 return
@@ -62,9 +67,9 @@ public final class ImageURLPreviewLoader: ObservableObject {
         cache[url] = data
     }
 
-    public static let maxBytes = 10 * 1024 * 1024
+    public nonisolated static let maxBytes = 10 * 1024 * 1024
 
-    public static let urlSessionFetch: Fetch = { url in
+    public nonisolated static let urlSessionFetch: Fetch = { url in
         var request = URLRequest(url: url)
         request.timeoutInterval = 10
         let (data, response) = try await URLSession.shared.data(for: request)
