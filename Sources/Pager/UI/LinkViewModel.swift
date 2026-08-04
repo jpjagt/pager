@@ -57,7 +57,10 @@ final class LinkViewModel: ObservableObject {
 
     /// ⌘V with an image (or image file) on the pasteboard. The image becomes
     /// the DRAFT — committed on popover close, exactly like typed text.
-    func pasteFromGeneralPasteboard() {
+    /// Returns whether the pasteboard held an image we took; false means the
+    /// caller should let the text field handle the paste natively.
+    @discardableResult
+    func pasteFromGeneralPasteboard() -> Bool {
         let pasteboard = NSPasteboard.general
         var imageDatas: [Data] = []
         for type in [NSPasteboard.PasteboardType.png, .tiff] {
@@ -70,7 +73,7 @@ final class LinkViewModel: ObservableObject {
             if let data = try? Data(contentsOf: url) { imageDatas.append(data) }
         }
         guard case .image(let raw)? = DropPayloadClassifier.classify(
-            imageDatas: imageDatas, strings: []) else { return }
+            imageDatas: imageDatas, strings: []) else { return false }
         do {
             try session.setImage(raw)
             draftImage = session.draftImageData
@@ -80,6 +83,36 @@ final class LinkViewModel: ObservableObject {
         } catch {
             imageError = "couldn't read that image"
         }
+        return true
+    }
+
+    private var pasteMonitor: Any?
+
+    /// Installed while the popover is open. ⌘V never reaches SwiftUI's
+    /// onPasteCommand: the Edit menu's key equivalent dispatches paste: to the
+    /// field editor (first responder), which beeps on an image-only pasteboard.
+    /// This monitor intercepts ⌘V first, takes the image if there is one, and
+    /// passes everything else through to the text field.
+    func installPasteMonitor() {
+        guard pasteMonitor == nil else { return }
+        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self,
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                  event.charactersIgnoringModifiers == "v",
+                  event.window?.isKeyWindow == true,
+                  event.window?.contentViewController is NSHostingController<PopoverView>
+            else { return event }
+            return self.pasteFromGeneralPasteboard() ? nil : event
+        }
+    }
+
+    func removePasteMonitor() {
+        if let monitor = pasteMonitor { NSEvent.removeMonitor(monitor) }
+        pasteMonitor = nil
+    }
+
+    deinit {
+        if let monitor = pasteMonitor { NSEvent.removeMonitor(monitor) }
     }
 
     /// The ✕ on the image: back to an empty text draft.

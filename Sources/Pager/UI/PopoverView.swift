@@ -94,6 +94,9 @@ struct PopoverView: View {
         }
         .padding(16)
         .frame(width: 360)
-        .onAppear { focused = true }
+        .onAppear {
+            focused = true
+            model.installPasteMonitor()
+        }
     }
 }
