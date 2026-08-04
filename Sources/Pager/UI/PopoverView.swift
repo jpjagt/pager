@@ -1,10 +1,18 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import PagerCore
 
 struct PopoverView: View {
     @ObservedObject var model: LinkViewModel
     @ObservedObject var updates: UpdateController
+    @ObservedObject var previews: ImageURLPreviewLoader
     @FocusState private var focused: Bool
+
+    init(model: LinkViewModel, updates: UpdateController) {
+        self.model = model
+        self.updates = updates
+        self.previews = model.previewLoader
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -46,6 +54,9 @@ struct PopoverView: View {
                 .focused($focused)
                 .onChange(of: model.text) { _ in model.textEdited() }
                 .onSubmit { model.onClose?() } // Enter commits + closes the popover
+                .onPasteCommand(of: [UTType.image, UTType.fileURL]) { _ in
+                    model.pasteFromGeneralPasteboard()
+                }
 
             if !model.detectedURLs.isEmpty {
                 HStack(spacing: 12) {
@@ -55,6 +66,24 @@ struct PopoverView: View {
                             .underline()
                     }
                 }
+            }
+
+            if let error = model.imageError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let draft = model.draftImage {
+                PagerImageView(
+                    imageData: draft,
+                    onTap: { model.openDraftImage() },
+                    onClear: { model.clearImage() })
+            } else if let preview = previews.preview {
+                PagerImageView(
+                    imageData: preview.data,
+                    onTap: { NSWorkspace.shared.open(preview.url) },
+                    onClear: nil)
             }
 
             if model.showOfflineHint {
