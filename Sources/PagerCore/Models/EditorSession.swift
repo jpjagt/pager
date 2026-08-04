@@ -10,13 +10,13 @@ public protocol ContentCommitter: AnyObject {
 /// The pure editing logic behind the popover, extracted from `LinkViewModel` so
 /// it can be driven headlessly (unit tests + e2e). No AppKit.
 ///
-/// Model: the draft is private. `edit` mutates only the draft — never the store
-/// or the committer. `commit` is the single point that pushes (on popover
-/// close). Remote values land in the store/menu bar independently and never
-/// overwrite a live draft.
+/// Model: the draft is private and holds either text or an image (never both).
+/// `edit`/`setImage` mutate only the draft. `commit` is the single point that
+/// pushes (popover close, or immediately for a menu-bar drop). Remote values
+/// land in the store/menu bar independently and never overwrite a live draft.
 @MainActor
 public final class EditorSession {
-    public private(set) var text: String
+    public private(set) var content: PagerContent
     public private(set) var detectedURLs: [TextUtil.URLMatch]
 
     public static let maxLength = 500
@@ -33,10 +33,16 @@ public final class EditorSession {
         self.store = store
         self.committer = committer
         self.now = now
-        let cached = store.links.first(where: { $0.id == linkId })?.cachedText ?? ""
-        self.text = cached
-        self.detectedURLs = TextUtil.detectURLs(in: cached)
+        let cached = store.cachedContent(id: linkId)
+        self.content = cached
+        self.detectedURLs = TextUtil.detectURLs(in: cached.textValue)
     }
+
+    /// The draft's text ("" while the draft is an image).
+    public var text: String { content.textValue }
+
+    /// The draft's image bytes (nil while the draft is text).
+    public var draftImageData: Data? { content.imageData }
 
     /// The current shared/remote value (what the menu bar shows). Read-only here
     /// — the draft is never replaced from it while editing.
@@ -45,20 +51,38 @@ public final class EditorSession {
     }
 
     /// Updates the private draft only: char cap, URL detection, mark dirty.
-    /// Does not write to the store or commit.
+    /// Replaces an image draft (a pager holds text OR an image, never both).
     public func edit(_ newText: String) {
-        text = newText.count > Self.maxLength ? String(newText.prefix(Self.maxLength)) : newText
-        detectedURLs = TextUtil.detectURLs(in: text)
+        let capped = newText.count > Self.maxLength ? String(newText.prefix(Self.maxLength)) : newText
+        content = .text(capped)
+        detectedURLs = TextUtil.detectURLs(in: capped)
         dirty = true
     }
 
-    /// The single commit point (popover close). Pushes the draft via the
-    /// committer and writes it to the cache so the menu bar reflects the just-
-    /// sent message (own writes are echo-suppressed, so onText won't do it).
+    /// Replaces the draft with a processed image (downscaled, JPEG ≤ 600 KB).
+    /// Throws ImageCodecError on unreadable data; the draft is untouched then.
+    public func setImage(_ raw: Data) throws {
+        let jpeg = try ImageCodec.process(raw)
+        content = .image(jpeg)
+        detectedURLs = []
+        dirty = true
+    }
+
+    /// The ✕ affordance: back to an empty text draft.
+    public func clearImage() {
+        guard content.isImage else { return }
+        content = .text("")
+        detectedURLs = []
+        dirty = true
+    }
+
+    /// The single commit point. Pushes the draft via the committer and writes it
+    /// to the cache so the menu bar reflects the just-sent content (own writes
+    /// are echo-suppressed, so onContent won't do it).
     public func commit() {
         guard dirty else { return }
         dirty = false
-        committer.commitContent(.text(text))
-        store.updateCachedText(id: linkId, text: text, writtenAt: now())
+        committer.commitContent(content)
+        store.updateCachedContent(id: linkId, content: content, writtenAt: now())
     }
 }

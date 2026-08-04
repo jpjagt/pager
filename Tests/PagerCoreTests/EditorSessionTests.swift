@@ -1,10 +1,11 @@
 import XCTest
 @testable import PagerCore
 
-/// Captures committed text instead of touching the network.
+/// Captures committed content instead of touching the network.
+@MainActor
 final class StubCommitter: ContentCommitter {
-    private(set) var committed: [String] = []
-    func commitContent(_ content: PagerContent) { committed.append(content.textValue) }
+    var lastContent: PagerContent?
+    func commitContent(_ content: PagerContent) { lastContent = content }
 }
 
 @MainActor
@@ -36,20 +37,20 @@ final class EditorSessionTests: XCTestCase {
     func testEditDoesNotPropagate() {
         session.edit("draft in progress")
         XCTAssertEqual(session.text, "draft in progress")
-        XCTAssertTrue(committer.committed.isEmpty, "edit must not commit")
+        XCTAssertNil(committer.lastContent, "edit must not commit")
         XCTAssertEqual(store.links.first?.cachedText, "hello", "edit must not touch the cache/menu bar")
     }
 
     func testCommitSendsAndUpdatesCache() {
         session.edit("new message")
         session.commit()
-        XCTAssertEqual(committer.committed, ["new message"])
+        XCTAssertEqual(committer.lastContent, .text("new message"))
         XCTAssertEqual(store.links.first?.cachedText, "new message")
     }
 
     func testCommitWithoutEditIsNoOp() {
         session.commit()
-        XCTAssertTrue(committer.committed.isEmpty)
+        XCTAssertNil(committer.lastContent)
         XCTAssertEqual(store.links.first?.cachedText, "hello")
     }
 
@@ -64,5 +65,48 @@ final class EditorSessionTests: XCTestCase {
     func testCharCapEnforced() {
         session.edit(String(repeating: "x", count: 600))
         XCTAssertEqual(session.text.count, 500)
+    }
+
+    func testSetImageCommitsImageContent() throws {
+        let raw = TestImageFactory.png(width: 800, height: 600)
+        try session.setImage(raw)
+        XCTAssertNotNil(session.draftImageData)
+        XCTAssertEqual(session.text, "")
+        session.commit()
+        guard case .image(let sent)? = committer.lastContent else {
+            return XCTFail("expected image commit")
+        }
+        XCTAssertTrue(ImageCodec.isDecodableImage(sent))
+        XCTAssertLessThanOrEqual(sent.count, ImageCodec.maxEncodedBytes)
+        XCTAssertEqual(store.cachedContent(id: link.id), .image(sent))
+    }
+
+    func testSetImageRejectsGarbageAndKeepsDraft() {
+        session.edit("my draft")
+        XCTAssertThrowsError(try session.setImage(Data("junk".utf8)))
+        XCTAssertEqual(session.text, "my draft") // draft untouched on failure
+    }
+
+    func testTypingReplacesImageDraft() throws {
+        try session.setImage(TestImageFactory.png(width: 100, height: 100))
+        session.edit("words now")
+        XCTAssertNil(session.draftImageData)
+        session.commit()
+        XCTAssertEqual(committer.lastContent, .text("words now"))
+    }
+
+    func testClearImageResetsToEmptyText() throws {
+        try session.setImage(TestImageFactory.png(width: 100, height: 100))
+        session.clearImage()
+        XCTAssertNil(session.draftImageData)
+        session.commit()
+        XCTAssertEqual(committer.lastContent, .text(""))
+    }
+
+    func testSessionOpensOnCachedImage() throws {
+        let jpeg = try ImageCodec.process(TestImageFactory.png(width: 100, height: 100))
+        store.updateCachedContent(id: link.id, content: .image(jpeg), writtenAt: 1)
+        let fresh = EditorSession(linkId: link.id, store: store, committer: committer)
+        XCTAssertEqual(fresh.draftImageData, jpeg)
     }
 }
