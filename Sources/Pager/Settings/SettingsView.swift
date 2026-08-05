@@ -147,24 +147,15 @@ private struct LinkSettingsRow: View {
                     .font(.caption).monospacedDigit()
                     .frame(width: 48, alignment: .trailing)
             }
+            // transitional: Task 11 replaces this with real screen/case swatch pickers
             HStack {
-                ColorPicker(
-                    "color",
-                    selection: Binding(
-                        get: {
-                            Color(nsColor: link.appearance.colorHex
-                                .flatMap(TextUtil.color(fromHex:)) ?? .labelColor)
-                        },
-                        set: {
-                            link.appearance.colorHex = TextUtil.hex(from: NSColor($0))
-                            onChange(link)
-                        }),
-                    supportsOpacity: false)
-                Button("default color") {
-                    link.appearance.colorHex = nil
-                    onChange(link)
-                }
-                .controlSize(.small)
+                Text("screen color")
+                Text(link.appearance.screenColor.rawValue)
+                    .foregroundStyle(.secondary)
+                Circle()
+                    .fill(Color(nsColor: TextUtil.color(
+                        fromHex: link.appearance.screenColor.palette.backlight) ?? .labelColor))
+                    .frame(width: 14, height: 14)
             }
         }
     }

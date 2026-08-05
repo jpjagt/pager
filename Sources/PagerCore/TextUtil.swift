@@ -30,12 +30,4 @@ public enum TextUtil {
             blue: CGFloat(value & 0xFF) / 255,
             alpha: 1)
     }
-
-    public static func hex(from color: NSColor) -> String {
-        let rgb = color.usingColorSpace(.sRGB) ?? color
-        return String(format: "#%02X%02X%02X",
-                      Int(round(rgb.redComponent * 255)),
-                      Int(round(rgb.greenComponent * 255)),
-                      Int(round(rgb.blueComponent * 255)))
-    }
 }

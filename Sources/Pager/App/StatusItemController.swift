@@ -68,7 +68,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let attributed = NSMutableAttributedString(
             string: display,
             attributes: [.font: NSFont.systemFont(ofSize: prefs.fontSize)])
-        let base = prefs.colorHex.flatMap(TextUtil.color(fromHex:)) ?? .labelColor
+        // transitional: Task 10 replaces this with appearance-aware menuBarInk selection
+        let base = TextUtil.color(fromHex: prefs.screenColor.palette.menuBarInkOnLight) ?? .labelColor
         let color = prefs.opacity < 1 ? base.withAlphaComponent(prefs.opacity) : base
         attributed.addAttribute(
             .foregroundColor, value: color,

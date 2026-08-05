@@ -15,10 +15,12 @@ final class TextUtilTests: XCTestCase {
         XCTAssertTrue(TextUtil.detectURLs(in: "plain text 📟").isEmpty)
     }
 
-    func testColorHexRoundTrip() {
-        let color = TextUtil.color(fromHex: "#3366FF")
-        XCTAssertNotNil(color)
-        XCTAssertEqual(TextUtil.hex(from: color!), "#3366FF")
+    func testColorFromHexDecodesComponents() throws {
+        let color = try XCTUnwrap(TextUtil.color(fromHex: "#3366FF"))
+        let rgb = color.usingColorSpace(.sRGB)!
+        XCTAssertEqual(Int(round(rgb.redComponent * 255)), 0x33)
+        XCTAssertEqual(Int(round(rgb.greenComponent * 255)), 0x66)
+        XCTAssertEqual(Int(round(rgb.blueComponent * 255)), 0xFF)
     }
 
     func testInvalidHexReturnsNil() {

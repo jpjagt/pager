@@ -51,12 +51,14 @@ final class LinkStoreTests: XCTestCase {
         link.nickname = "Tom"
         link.appearance.maxWidth = 150
         link.appearance.fontSize = 15
-        link.appearance.colorHex = "#FF0000"
+        link.appearance.screenColor = .pink
+        link.appearance.caseColor = .beige
         store.update(link)
         let reloaded = LinkStore(defaults: defaults).links[0]
         XCTAssertEqual(reloaded.nickname, "Tom")
         XCTAssertEqual(reloaded.appearance.maxWidth, 150)
-        XCTAssertEqual(reloaded.appearance.colorHex, "#FF0000")
+        XCTAssertEqual(reloaded.appearance.screenColor, .pink)
+        XCTAssertEqual(reloaded.appearance.caseColor, .beige)
     }
 
     func testShareCodeAccessor() {
