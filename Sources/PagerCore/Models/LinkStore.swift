@@ -37,7 +37,11 @@ public final class LinkStore: ObservableObject {
     public func add(code: ShareCode) -> PagerLink {
         let counter = defaults.integer(forKey: Keys.nicknameCounter) + 1
         defaults.set(counter, forKey: Keys.nicknameCounter)
-        let link = PagerLink(code: code.full, nickname: "Pager \(counter)")
+        // Assign a screen color distinct from existing links (until all 7 are
+        // in use), so two pagers don't default to the same color.
+        let screenColor = ScreenColor.nextUnused(taken: links.map { $0.appearance.screenColor })
+        let appearance = AppearancePrefs(screenColor: screenColor)
+        let link = PagerLink(code: code.full, nickname: "Pager \(counter)", appearance: appearance)
         links.append(link)
         save()
         return link

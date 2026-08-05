@@ -147,16 +147,59 @@ private struct LinkSettingsRow: View {
                     .font(.caption).monospacedDigit()
                     .frame(width: 48, alignment: .trailing)
             }
-            // transitional: Task 11 replaces this with real screen/case swatch pickers
-            HStack {
+            HStack(alignment: .top) {
                 Text("screen color")
-                Text(link.appearance.screenColor.rawValue)
-                    .foregroundStyle(.secondary)
-                Circle()
-                    .fill(Color(nsColor: TextUtil.color(
-                        fromHex: link.appearance.screenColor.palette.backlight) ?? .labelColor))
-                    .frame(width: 14, height: 14)
+                Spacer()
+                HStack(spacing: 8) {
+                    ForEach(ScreenColor.allCases, id: \.self) { color in
+                        SwatchButton(
+                            hex: color.palette.backlight,
+                            isSelected: link.appearance.screenColor == color,
+                            action: {
+                                link.appearance.screenColor = color
+                                onChange(link)
+                            })
+                    }
+                }
+            }
+            HStack(alignment: .top) {
+                Text("case color")
+                Spacer()
+                HStack(spacing: 8) {
+                    ForEach(CaseColor.allCases, id: \.self) { color in
+                        SwatchButton(
+                            hex: color.palette.shellTop,
+                            isSelected: link.appearance.caseColor == color,
+                            action: {
+                                link.appearance.caseColor = color
+                                onChange(link)
+                            })
+                    }
+                }
             }
         }
+    }
+}
+
+/// A single round color swatch used by the screen/case color rows. Renders
+/// the actual theme color and an unambiguous selected ring — not a subtle
+/// tint — since the whole point is to make the choice visible at a glance.
+private struct SwatchButton: View {
+    let hex: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Circle()
+                .fill(Color(nsColor: TextUtil.color(fromHex: hex) ?? .labelColor))
+                .frame(width: 20, height: 20)
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.accentColor, lineWidth: isSelected ? 2.5 : 0)
+                        .padding(-2.5)
+                )
+        }
+        .buttonStyle(.plain)
     }
 }

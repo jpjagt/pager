@@ -61,6 +61,22 @@ final class LinkStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.appearance.caseColor, .beige)
     }
 
+    func testAddAssignsDistinctScreenColorsUntilExhausted() {
+        let store = LinkStore(defaults: defaults)
+        var seen: [ScreenColor] = []
+        for _ in 0..<ScreenColor.allCases.count {
+            let link = store.add(code: ShareCode.generate())
+            XCTAssertFalse(seen.contains(link.appearance.screenColor),
+                            "expected a distinct screen color from \(seen)")
+            seen.append(link.appearance.screenColor)
+        }
+        XCTAssertEqual(Set(seen), Set(ScreenColor.allCases))
+
+        // 8th link wraps back to reuse a color rather than crashing/defaulting oddly.
+        let eighth = store.add(code: ShareCode.generate())
+        XCTAssertEqual(eighth.appearance.screenColor, .green)
+    }
+
     func testShareCodeAccessor() {
         let store = LinkStore(defaults: defaults)
         let code = ShareCode.generate()
