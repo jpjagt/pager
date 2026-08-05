@@ -95,12 +95,45 @@ final class EditorSessionTests: XCTestCase {
         XCTAssertEqual(committer.lastContent, .text("words now"))
     }
 
-    func testClearImageResetsToEmptyText() throws {
-        try session.setImage(TestImageFactory.png(width: 100, height: 100))
-        session.clearImage()
+    func testClearFromTextDraftEmptiesItAndStaysDirty() {
+        session.edit("draft in progress")
+        session.clear()
+        XCTAssertEqual(session.text, "")
         XCTAssertNil(session.draftImageData)
         session.commit()
+        XCTAssertEqual(committer.lastContent, .text(""), "clear() must stay dirty, not commit itself")
+    }
+
+    func testClearFromImageDraftEmptiesBothAndStaysDirty() throws {
+        try session.setImage(TestImageFactory.png(width: 100, height: 100))
+        session.clear()
+        XCTAssertNil(session.draftImageData)
+        XCTAssertEqual(session.text, "")
+        session.commit()
         XCTAssertEqual(committer.lastContent, .text(""))
+    }
+
+    func testDiscardRestoresCachedContentAndClearsDirty() {
+        session.edit("draft in progress")
+        session.discard()
+        XCTAssertEqual(session.text, "hello")
+        session.commit()
+        XCTAssertNil(committer.lastContent, "discard() must clear dirty so commit() is a no-op")
+        XCTAssertEqual(store.links.first?.cachedText, "hello")
+    }
+
+    func testCommitAfterDiscardPushesNothing() {
+        session.edit("draft in progress")
+        session.discard()
+        session.commit()
+        XCTAssertNil(committer.lastContent)
+    }
+
+    func testDiscardPicksUpRemoteValueLandedMidEdit() {
+        session.edit("my draft")
+        store.updateCachedText(id: link.id, text: "their message", writtenAt: 2)
+        session.discard()
+        XCTAssertEqual(session.text, "their message", "discard() reverts to cached content, so a remote update mid-edit wins")
     }
 
     func testSessionOpensOnCachedImage() throws {

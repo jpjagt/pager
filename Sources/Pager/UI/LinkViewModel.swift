@@ -117,7 +117,7 @@ final class LinkViewModel: ObservableObject {
 
     /// The ✕ on the image: back to an empty text draft.
     func clearImage() {
-        session.clearImage()
+        session.clear()
         draftImage = nil
     }
 

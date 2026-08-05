@@ -68,12 +68,24 @@ public final class EditorSession {
         dirty = true
     }
 
-    /// The ✕ affordance: back to an empty text draft.
-    public func clearImage() {
-        guard content.isImage else { return }
+    /// The `C` key: empties the draft — text and image — but leaves it dirty.
+    /// The user is still editing; nothing is committed. Generalizes the former
+    /// `clearImage()`, which only reset an image draft.
+    public func clear() {
         content = .text("")
         detectedURLs = []
         dirty = true
+    }
+
+    /// The ✕ key: abandons the edit, reverting the draft to the last cached
+    /// content and clearing dirty. Reverts to *cached* (not a session-start
+    /// snapshot), so a remote update that landed mid-edit wins here — that's
+    /// intentional and consistent with last-write-wins.
+    public func discard() {
+        let cached = store.cachedContent(id: linkId)
+        content = cached
+        detectedURLs = TextUtil.detectURLs(in: cached.textValue)
+        dirty = false
     }
 
     /// The single commit point. Pushes the draft via the committer and writes it
