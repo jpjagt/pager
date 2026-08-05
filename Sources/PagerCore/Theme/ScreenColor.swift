@@ -34,8 +34,7 @@ public enum ScreenColor: String, Codable, CaseIterable {
     case green, blue, pink, orange, yellow, red, indigo
 
     /// The palette is total — every case resolves to a complete set of hex
-    /// values, no optionals. Hues below are a first pass; they get tuned
-    /// visually starting Task 3.
+    /// values, no optionals.
     public var palette: ScreenPalette {
         switch self {
         case .green:

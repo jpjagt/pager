@@ -10,14 +10,14 @@ import PagerUI
 /// `PagerDeviceView` deliberately knows about none of those types (it lives in
 /// `PagerUI` so `design-preview` can render it from literals), so this shim is
 /// what keeps that boundary intact — it holds no logic of its own beyond the
-/// mapping and the session-local "hide the update banner" flag.
+/// mapping. The "hide the update banner" state itself (a dismissed version
+/// string, so the banner returns for the *next* version) is owned and
+/// persisted by `UpdateController`, not this view.
 struct PagerDeviceAdapter: View {
     @ObservedObject var model: LinkViewModel
     @ObservedObject var updates: UpdateController
     @ObservedObject var focus: PagerWindowFocus
     @ObservedObject var previews: ImageURLPreviewLoader
-    /// "hide" on the update banner. Session-local for now; Task 12 persists it.
-    @State private var updateBannerHidden = false
 
     init(model: LinkViewModel, updates: UpdateController, focus: PagerWindowFocus) {
         self.model = model
@@ -40,13 +40,8 @@ struct PagerDeviceAdapter: View {
             imageData: model.draftImage ?? previews.preview?.data,
             isWindowFocused: focus.isFocused,
             isOffline: model.showOfflineHint,
-            updateBannerVersion: updateBannerVersion,
+            updateBannerVersion: updates.bannerVersion,
             links: model.detectedURLs.map(\.url))
-    }
-
-    private var updateBannerVersion: String? {
-        guard updates.updateAvailable, !updateBannerHidden else { return nil }
-        return updates.availableVersion
     }
 
     private var actions: PagerDeviceActions {
@@ -74,6 +69,6 @@ struct PagerDeviceAdapter: View {
                 model.onRequestClose?()
                 updates.installUpdate()
             },
-            onHideUpdate: { updateBannerHidden = true })
+            onHideUpdate: { updates.dismissUpdateBanner() })
     }
 }

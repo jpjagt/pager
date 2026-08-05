@@ -15,6 +15,26 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate,
     @Published private(set) var updateAvailable = false
     @Published private(set) var availableVersion: String?
 
+    /// The version string the user last dismissed via the LCD banner's "hide",
+    /// persisted app-wide in `UserDefaults` (not a per-window/session flag) so
+    /// it survives relaunch. Deliberately a *version string*, not a bool —
+    /// storing a bool would hide the banner forever; comparing versions means
+    /// the next update still gets its own banner.
+    @Published private(set) var dismissedVersion: String?
+
+    /// The banner should show exactly when a background check found an update
+    /// that isn't the one already dismissed.
+    var bannerVersion: String? {
+        guard updateAvailable, let availableVersion, availableVersion != dismissedVersion else { return nil }
+        return availableVersion
+    }
+
+    /// User tapped "hide" on the LCD's update banner.
+    func dismissUpdateBanner() {
+        dismissedVersion = availableVersion
+        defaults.set(availableVersion, forKey: Self.dismissedVersionKey)
+    }
+
     /// Mirrors Sparkle's automatic-check pref. Stored + @Published so the
     /// onboarding/settings toggles re-render when flipped; writes through to
     /// the updater.
@@ -22,9 +42,14 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate,
         didSet { updaterController?.updater.automaticallyChecksForUpdates = automaticallyChecksForUpdates }
     }
 
+    private static let dismissedVersionKey = "PagerDismissedUpdateVersion"
+
+    private let defaults: UserDefaults
     private var updaterController: SPUStandardUpdaterController!
 
-    override init() {
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.dismissedVersion = defaults.string(forKey: Self.dismissedVersionKey)
         super.init()
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true, updaterDelegate: self, userDriverDelegate: self)

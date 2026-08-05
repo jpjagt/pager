@@ -50,8 +50,7 @@ public enum CaseColor: String, Codable, CaseIterable {
     case darkGrey, beige
 
     /// The palette is total — every case resolves to a complete set of hex
-    /// values, no optionals. Hues below are a first pass; they get tuned
-    /// visually starting Task 3.
+    /// values, no optionals.
     public var palette: CasePalette {
         switch self {
         case .darkGrey:

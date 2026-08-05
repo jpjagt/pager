@@ -5,8 +5,9 @@ import PagerCore
 /// gradient, a hard bevel pair framing the edge, and a subtle noise grain so
 /// it reads as physical material rather than a flat rounded rectangle.
 ///
-/// `PagerShell` draws only the case — no screen, no keys (those arrive in
-/// later tasks) — around whatever `content` it's given.
+/// `PagerShell` draws the case, its bottom key row, and the debossed
+/// wordmark — no screen — around whatever `content` (the `LCDPanel`) it's
+/// given.
 public struct PagerShell<Content: View>: View {
     private let palette: CasePalette
     private let cornerRadius: CGFloat
@@ -56,7 +57,7 @@ public struct PagerShell<Content: View>: View {
     /// The bottom row: the debossed wordmark at the left, the physical keys
     /// at the right. Laid out together (per the brief) since both read off
     /// the same `palette` and sit in the same trough at the bottom of the
-    /// case; final proportions are Task 6's job.
+    /// case.
     private var keyRow: some View {
         HStack(alignment: .center, spacing: 12) {
             Wordmark(palette: palette)

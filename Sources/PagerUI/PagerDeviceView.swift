@@ -4,8 +4,8 @@ import PagerCore
 /// The composed device: `PagerShell` (case + keys + wordmark) wrapping an
 /// `LCDPanel` (screen) whose content is the fixed stack described in the
 /// task brief — **props in, callbacks out, nothing else.** No
-/// `LinkViewModel`, no `UpdateController`, no store access: a later task's
-/// thin adapter in the `Pager` target maps live models onto
+/// `LinkViewModel`, no `UpdateController`, no store access: `PagerDeviceAdapter`
+/// (in the `Pager` target) is the thin adapter that maps live models onto
 /// `PagerDeviceState`/`PagerDeviceActions`, which is what lets
 /// `design-preview` render any state as a literal value.
 ///
@@ -17,8 +17,8 @@ import PagerCore
 /// Width is fixed at 360; height is whatever the content naturally needs
 /// (nothing in this view or the ones it composes imposes a fixed/aspect
 /// height), so a growing message, an attached image, or a stack of banners
-/// all grow the device — which is what the window (a later task) measures via
-/// this view's fitting size.
+/// all grow the device — which is what `PagerWindow` measures via this
+/// view's fitting size.
 public struct PagerDeviceView: View {
     /// The LCD's usable content width: 360 (device) − 2× shell content inset
     /// (`PagerShell`'s default `cornerRadius` 18 × 0.55) − 2× `LCDPanel`'s
