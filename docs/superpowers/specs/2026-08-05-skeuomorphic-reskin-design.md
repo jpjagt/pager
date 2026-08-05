@@ -27,7 +27,7 @@ Deliberately out of scope, to keep this to a single implementation plan:
   `TextField` with an `NSTextView` bridge; they are the same surface and will be
   done together in a later pass. Until then URLs render as banners (see
   [Banners](#banners)).
-- **`AddPagerView` and `SettingsView` chrome.** They stay native macOS.
+- **`AddPagerView` and `SettingsView` styling.** They stay native macOS.
   `SettingsView` only *gains* the two theme pickers where the `ColorPicker` was.
 - **The menu bar item's own rendering.** Text and image thumbnail keep their
   current shape; only their *color* becomes theme-derived.
@@ -181,9 +181,14 @@ Adds `windowFrame: CGRect?` — the last dragged position, `nil` until first
 dragged. `decodeIfPresent`, like `cachedIsImage` before it. A draggable window
 that forgets where it was is broken, so this is required, not optional.
 
-### 6. Chrome components (Pager)
+### 6. Device components (PagerUI)
 
-New `Sources/Pager/UI/Chrome/`, one job per file:
+These live in a **`PagerUI` library target**, not in `Pager`. SwiftPM targets
+cannot import an `executableTarget`, so chrome inside `Pager` would be
+unreachable from `DesignPreview` (§11). The library also forces the device views
+to be props-driven and genuinely dumb, which is the repo's stated boundary.
+
+New `Sources/PagerUI/Device/`, one job per file:
 
 - **`PagerShell`** — case body gradient, bevel pair, noise overlay; a container
   taking a `CasePalette`.
@@ -202,7 +207,7 @@ New `Sources/Pager/UI/Chrome/`, one job per file:
 `UI/PopoverView.swift` is renamed to `UI/PagerDeviceView.swift` and rewritten to
 compose the above. The name `PopoverView` stops being accurate once the popover
 is gone. It stays a thin shell over `LinkViewModel`, per the repo's
-core-vs-views boundary — the chrome is presentation, and every decision it
+core-vs-views boundary — the device view is presentation, and every decision it
 renders comes from `PagerCore`.
 
 **Bevels need stroke stacks, not just inner shadow.** Native
@@ -284,7 +289,7 @@ needed and the existing `onSubmit` path already does this.
 
 ### 11. `DesignPreview` (new target)
 
-A dev-only SwiftPM executable rendering the real chrome to PNG via SwiftUI's
+A dev-only SwiftPM executable rendering the real device views to PNG via SwiftUI's
 `ImageRenderer` (macOS 13+). Headless: no window, no app launch, no permissions.
 
 ```sh
@@ -296,7 +301,7 @@ swift run design-preview --screen indigo --case beige --state image
 The contact sheet renders every theme combination plus the states easy to
 forget: empty, long wrapping text, image attached, offline, update available.
 
-It renders the **actual** chrome views, not a copy, so it cannot drift.
+It renders the **actual** device views, not a copy, so it cannot drift.
 
 It must **not** ship: `make bundle` copies specific binaries, and
 `design-preview` stays off that list. It adds no dependency to the `Pager`
@@ -307,12 +312,12 @@ product.
 Two tiers, answering different questions.
 
 **Tier 1 — `swift run design-preview`.** Fast, deterministic, no permissions.
-Used for essentially all chrome iteration. Validated by a working spike before
+Used for essentially all device-view iteration. Validated by a working spike before
 this spec was written.
 
 **Tier 2 — the real app.** `ImageRenderer` has real blind spots: it does not
 faithfully render materials/vibrancy, shows no live caret, and knows nothing
-about how the chrome sits in the actual window. So a debug hook:
+about how the device sits in the actual window. So a debug hook:
 
 ```sh
 PAGER_DEBUG_WINDOW=1 swift run Pager
@@ -331,7 +336,7 @@ Tier 1 is fast but slightly lies. Design against tier 1, confirm against tier 2.
 > this machine (14.5). **XcodeBuildMCP** is a poor fit — there is no Xcode
 > project; `swift build` and `make bundle` already work.
 
-`.accessibilityIdentifier()` is applied to the chrome views regardless: cheap,
+`.accessibilityIdentifier()` is applied to the device views regardless: cheap,
 and it pays off if a regression suite is ever added.
 
 ## Testing

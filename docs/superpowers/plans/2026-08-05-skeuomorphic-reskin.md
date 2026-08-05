@@ -4,7 +4,7 @@
 
 **Goal:** Reskin Pager so each link renders as a per-link-themed physical pager — molded case, recessed backlit LCD — in a draggable always-on-top window replacing the transient popover.
 
-**Architecture:** Theme data and every decision live in `PagerCore` (pure, testable). A new `PagerUI` library holds the presentational chrome, driven entirely by props so it can be rendered headlessly. `Pager` adapts its live models onto that view; `DesignPreview` renders the same views to PNG for a closed visual loop.
+**Architecture:** Theme data and every decision live in `PagerCore` (pure, testable). A new `PagerUI` library holds the presentational device views, driven entirely by props so it can be rendered headlessly. `Pager` adapts its live models onto that view; `DesignPreview` renders the same views to PNG for a closed visual loop.
 
 **Tech Stack:** SwiftPM (no Xcode project), SwiftUI + AppKit, `ImageRenderer` (macOS 13+), CoreImage for the noise tile. No new third-party dependencies.
 
@@ -20,22 +20,28 @@
 - Log events for images carry `ct_len` only, never image ciphertext.
 - `design-preview` must **never** ship — keep it out of `make bundle`.
 - All new user-facing copy is **lowercase**, matching existing UI strings ("type a message…", "quit pager").
-- Every new chrome view gets an `.accessibilityIdentifier()`.
+- Every new device view gets an `.accessibilityIdentifier()`.
 
-## Deviation from the spec (read before Task 3)
+## Why `PagerUI` is a separate target (read before Task 3)
 
-The spec places chrome in `Sources/Pager/UI/Chrome/` and has `DesignPreview`
-render it. **That does not build:** `Pager` is an `executableTarget`, and SwiftPM
-targets cannot import executables.
+The device views cannot live in `Sources/Pager/`. `Pager` is an
+`executableTarget`, and **SwiftPM targets cannot import an executable** — so
+`DesignPreview` could never reach them, and the "renders the real views, cannot
+drift" guarantee would be false.
 
-Resolution: a new **`PagerUI` library target** holding the chrome and a
+Hence a **`PagerUI` library target** holding the device views and a
 **props-driven** `PagerDeviceView`. It takes a plain state struct, not
 `LinkViewModel`/`UpdateController`. `Pager` keeps a thin adapter mapping its live
 models onto those props; `DesignPreview` passes literal props.
 
-This is strictly better than the spec's arrangement — it forces the device view
-to be genuinely dumb (the repo's stated boundary), and makes rendering every
-visual state trivial, since a state is just a value.
+The constraint turns out to be a benefit: it forces the device view to be
+genuinely dumb (the repo's stated core-vs-views boundary), and makes rendering
+any visual state trivial, since a state is just a value.
+
+Naming: these are **device** views — the case, bezel, LCD well, keys, wordmark.
+Earlier drafts called this directory `Chrome/` (UI jargon for the frame around
+content); it was renamed to `Device/` to match `PagerDeviceView`/`PagerDeviceState`
+and to avoid reading as a metallic material.
 
 ## File structure
 
@@ -46,11 +52,11 @@ visual state trivial, since a state is just a value.
 | PagerCore | `Models/PagerLink.swift` *(mod)* | `AppearancePrefs` theme fields; `windowFrame` |
 | PagerCore | `Models/EditorSession.swift` *(mod)* | `clear()`, `discard()` |
 | PagerCore | `Window/PagerWindowPlacement.swift` | pure first-open frame placement |
-| PagerUI | `Chrome/NoiseTexture.swift` | cached procedural noise tile |
-| PagerUI | `Chrome/PagerShell.swift` | case body, bevel, noise, debossed wordmark |
-| PagerUI | `Chrome/LCDPanel.swift` | bezel, backlight, inner shadow, glow |
-| PagerUI | `Chrome/Banner.swift` | inverted-video LCD row |
-| PagerUI | `Chrome/KeyShapes.swift` | bézier key shapes + pressed `ButtonStyle` |
+| PagerUI | `Device/NoiseTexture.swift` | cached procedural noise tile |
+| PagerUI | `Device/PagerShell.swift` | case body, bevel, noise, debossed wordmark |
+| PagerUI | `Device/LCDPanel.swift` | bezel, backlight, inner shadow, glow |
+| PagerUI | `Device/Banner.swift` | inverted-video LCD row |
+| PagerUI | `Device/KeyShapes.swift` | bézier key shapes + pressed `ButtonStyle` |
 | PagerUI | `PagerDeviceState.swift` | the props contract |
 | PagerUI | `PagerDeviceView.swift` | composes all of the above |
 | Pager | `UI/PagerDeviceAdapter.swift` | `LinkViewModel`+`UpdateController` → props |
@@ -141,7 +147,7 @@ loses its only caller (the `ColorPicker`) and is deleted; `color(fromHex:)` is
 
 **Files:**
 - Modify: `Package.swift`
-- Create: `Sources/PagerUI/Chrome/NoiseTexture.swift`, `Sources/PagerUI/Chrome/PagerShell.swift`
+- Create: `Sources/PagerUI/Device/NoiseTexture.swift`, `Sources/PagerUI/Device/PagerShell.swift`
 - Create: `Sources/DesignPreview/main.swift`
 
 **Interfaces — Consumes:** `CaseColor`/`CasePalette` (Task 1).
@@ -187,7 +193,7 @@ in `MainActor.assumeIsolated { }` or it won't compile.
 ## Task 4: LCD panel and banners
 
 **Files:**
-- Create: `Sources/PagerUI/Chrome/LCDPanel.swift`, `Sources/PagerUI/Chrome/Banner.swift`
+- Create: `Sources/PagerUI/Device/LCDPanel.swift`, `Sources/PagerUI/Device/Banner.swift`
 - Modify: `Sources/DesignPreview/main.swift`
 
 **Interfaces — Consumes:** `ScreenPalette`, `PagerShell`.
@@ -222,8 +228,8 @@ LCD pixel at this scale. `.action` style carries tappable words (`update now`,
 ## Task 5: Keys and wordmark
 
 **Files:**
-- Create: `Sources/PagerUI/Chrome/KeyShapes.swift`
-- Modify: `Sources/PagerUI/Chrome/PagerShell.swift`, `Sources/DesignPreview/main.swift`
+- Create: `Sources/PagerUI/Device/KeyShapes.swift`
+- Modify: `Sources/PagerUI/Device/PagerShell.swift`, `Sources/DesignPreview/main.swift`
 
 **Interfaces — Produces:**
 ```
@@ -474,7 +480,7 @@ applies on top.
 
 **Intent:** Replace the `ColorPicker` block with two swatch rows — screen color
 (7) and case color (2). Swatches render the actual `backlight` / `shellTop`
-color so the choice is visible, with a clear selected state. Settings chrome
+color so the choice is visible, with a clear selected state. Settings styling
 stays native macOS; only this control changes.
 
 New pagers auto-assign via `ScreenColor.nextUnused(taken:)` over the store's
@@ -518,5 +524,5 @@ no longer has `colorHex`; the Commands section gains `design-preview`.
 
 - Pixel/dot-matrix font and inline clickable links via an `NSTextView` bridge —
   the same surface, to be done together in a later pass.
-- `AddPagerView` / `SettingsView` chrome — they stay native macOS.
+- `AddPagerView` / `SettingsView` styling — they stay native macOS.
 - The menu bar item's shape — only its color becomes theme-derived.
