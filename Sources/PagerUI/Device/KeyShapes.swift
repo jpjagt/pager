@@ -422,9 +422,20 @@ public struct PagerKeyRow: View {
         if pressed == id {
             PagerKeyFace(shape: shape, top: top, bottom: bottom, pressed: true,
                          showsRecess: id == .send, label: label)
+                .accessibilityIdentifier(identifier(for: id))
         } else {
             Button(action: action) { label() }
                 .buttonStyle(PagerKeyButtonStyle(shape: shape, top: top, bottom: bottom, showsRecess: id == .send))
+                .accessibilityIdentifier(identifier(for: id))
+        }
+    }
+
+    private func identifier(for key: Key) -> String {
+        switch key {
+        case .clear: return "key-clear"
+        case .menu: return "key-menu"
+        case .close: return "key-close"
+        case .send: return "key-send"
         }
     }
 

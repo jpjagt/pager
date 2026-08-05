@@ -27,9 +27,13 @@ public struct Banner: View {
         public let id = UUID()
         public let text: String
         public let action: (() -> Void)?
+        /// Identifies the tappable segment for UI testing. Ignored for
+        /// segments with no `action` (nothing interactive to find).
+        public let accessibilityIdentifier: String?
 
-        public init(_ text: String, action: (() -> Void)? = nil) {
+        public init(_ text: String, accessibilityIdentifier: String? = nil, action: (() -> Void)? = nil) {
             self.text = text
+            self.accessibilityIdentifier = accessibilityIdentifier
             self.action = action
         }
     }
@@ -72,6 +76,7 @@ public struct Banner: View {
                             .underline()
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier(segment.accessibilityIdentifier ?? "banner-action")
                 } else {
                     styledText(segment.text)
                 }

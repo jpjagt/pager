@@ -13,11 +13,15 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
+let knownStates = ["empty", "long", "image", "offline", "update"]
+
 struct Options {
     var caseColor: CaseColor = .darkGrey
-    var screenColor: ScreenColor?
+    var screenColor: ScreenColor = .green
     var outPath: String = "./preview.png"
     var pressedKey: PagerKeyRow.Key?
+    var sheet = false
+    var stateName: String?
 }
 
 func parseArguments(_ arguments: [String]) -> Options {
@@ -51,6 +55,14 @@ func parseArguments(_ arguments: [String]) -> Options {
             case "send": options.pressedKey = .send
             default: fail("unknown key '\(value)' — expected one of: clear, menu, close, send")
             }
+        case "--sheet":
+            options.sheet = true
+        case "--state":
+            guard let value = iterator.next() else { fail("--state requires a value") }
+            guard knownStates.contains(value) else {
+                fail("unknown state '\(value)' — expected one of: \(knownStates.joined(separator: ", "))")
+            }
+            options.stateName = value
         default:
             fail("unknown argument '\(arg)'")
         }
@@ -58,92 +70,236 @@ func parseArguments(_ arguments: [String]) -> Options {
     return options
 }
 
-/// Placeholder content standing in for the LCD/keys that arrive in later
-/// tasks — this task only proves the CASE renders and looks molded. A
-/// near-full-frame black box (round 1's original placeholder) made the case
-/// impossible to judge since it visually dominated the render; a thin
-/// outline plus a small label proves the shell without competing with it.
-/// The real LCD (not black) is Task 4's job.
-struct PlaceholderContent: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: 6, style: .continuous)
-            .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
-            .overlay(
-                Text("LCD")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.28))
-            )
-            .aspectRatio(16.0 / 7.0, contentMode: .fit)
-    }
-}
+// MARK: - Synthetic sample data
 
-/// Task 4's content: a lit `LCDPanel` with sample message text plus a
-/// stacked pair of inverted-video `Banner`s (an offline notice above an
-/// update prompt), so both new views are visible in one render. The two
-/// banners are separated by `spacing: 1` — the "one LCD pixel" gap the task
-/// brief calls for.
-struct ScreenContent: View {
-    let palette: ScreenPalette
-
-    var body: some View {
-        LCDPanel(palette: palette) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("dinner at 7?")
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
-                Spacer(minLength: 0)
-                VStack(spacing: 1) {
-                    Banner(palette: palette, style: .plain("offline — retrying"))
-                    Banner(
-                        palette: palette,
-                        style: .action([
-                            Banner.Segment("update available —"),
-                            Banner.Segment("update now") {},
-                        ])
-                    )
-                }
-            }
-        }
-        .aspectRatio(16.0 / 7.0, contentMode: .fit)
-    }
-}
-
-let options = parseArguments(Array(CommandLine.arguments.dropFirst()))
-let palette = options.caseColor.palette
-
-// A pager is a landscape device: the real app renders it in a 360pt-wide
-// window whose height follows content. 360×190pt was this preview's fixed
-// reference size through Task 4, but Task 5 adds a physical key row + the
-// debossed wordmark below the LCD — at 190pt tall the LCD alone filled
-// almost the whole case with no room left for either, so the frame grows to
-// 360×236 (720×472px at scale 2) to give the bottom row real space. Task 6
-// makes height content-driven; this is just enough to make the row
-// judgeable.
-let preview = PagerShell(palette: palette, pressedKey: options.pressedKey) {
-    if let screenColor = options.screenColor {
-        ScreenContent(palette: screenColor.palette)
-    } else {
-        PlaceholderContent()
-    }
-}
-.frame(width: 360, height: 236)
-
-let pngData: Data? = MainActor.assumeIsolated {
-    let renderer = ImageRenderer(content: preview)
-    renderer.scale = 2
-    guard let nsImage = renderer.nsImage,
-          let tiff = nsImage.tiffRepresentation,
+/// A small synthetic image built entirely in code (a gradient square with a
+/// label) so the `image` state never depends on an external file.
+func syntheticImageData() -> Data {
+    let size = CGSize(width: 480, height: 320)
+    let image = NSImage(size: size)
+    image.lockFocus()
+    let gradient = NSGradient(colors: [
+        NSColor(srgbRed: 0.35, green: 0.55, blue: 0.95, alpha: 1),
+        NSColor(srgbRed: 0.85, green: 0.35, blue: 0.55, alpha: 1),
+    ])
+    gradient?.draw(in: NSRect(origin: .zero, size: size), angle: 45)
+    let text = "sample.jpg" as NSString
+    let attrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 28, weight: .bold),
+        .foregroundColor: NSColor.white,
+    ]
+    let textSize = text.size(withAttributes: attrs)
+    text.draw(at: NSPoint(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2),
+              withAttributes: attrs)
+    image.unlockFocus()
+    guard let tiff = image.tiffRepresentation,
           let bitmap = NSBitmapImageRep(data: tiff),
           let png = bitmap.representation(using: .png, properties: [:])
-    else { return nil }
+    else { fail("failed to synthesize sample image") }
     return png
 }
 
-guard let pngData else { fail("failed to render preview image") }
-
-do {
-    try pngData.write(to: URL(fileURLWithPath: options.outPath))
-} catch {
-    fail("failed to write PNG to \(options.outPath): \(error)")
+/// Builds the `PagerDeviceState` for one of the named states the brief calls
+/// out as easy to get wrong.
+func deviceState(forNamedState name: String, caseColor: CaseColor, screenColor: ScreenColor) -> PagerDeviceState {
+    switch name {
+    case "empty":
+        return PagerDeviceState(screenColor: screenColor, caseColor: caseColor)
+    case "long":
+        return PagerDeviceState(
+            screenColor: screenColor, caseColor: caseColor,
+            text: "hey, are we still on for dinner at 7? I was thinking we could try that new ramen "
+                + "place downtown, the one everyone's been talking about — let me know if that works "
+                + "or if you'd rather do something else entirely, no pressure either way!")
+    case "image":
+        return PagerDeviceState(screenColor: screenColor, caseColor: caseColor, imageData: syntheticImageData())
+    case "offline":
+        return PagerDeviceState(screenColor: screenColor, caseColor: caseColor, text: "dinner at 7?", isOffline: true)
+    case "update":
+        return PagerDeviceState(
+            screenColor: screenColor, caseColor: caseColor, text: "dinner at 7?",
+            updateBannerVersion: "1.4.0")
+    default:
+        fail("unknown state '\(name)'")
+    }
 }
 
-print("design-preview: wrote \(options.outPath)")
+// MARK: - Rendering
+
+/// Renders via a real (invisible) `NSWindow` + `NSHostingView`, not
+/// `ImageRenderer`. `ImageRenderer` cannot capture `TextField` at all — with
+/// no real window/responder chain behind it, AppKit draws its generic
+/// "content unavailable" glyph (a yellow bar with a red do-not-enter symbol)
+/// in the control's place instead of the actual text. Hosting the view in a
+/// real (never-shown) window and grabbing the bitmap via `cacheDisplay(in:to:)`
+/// gives `NSTextField` a real backing store to lay out into, so the field
+/// renders its real text/placeholder/font like every other view.
+///
+/// Returns an `NSImage` (not yet PNG-encoded) so the contact sheet can
+/// composite many of these together before a single final encode.
+func renderNSImage(_ view: some View) -> NSImage {
+    MainActor.assumeIsolated {
+        let hosting = NSHostingView(rootView: view)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 2000, height: 2000),
+            styleMask: [.borderless], backing: .buffered, defer: false)
+        hosting.frame = NSRect(x: 0, y: 0, width: 2000, height: 2000)
+        window.contentView = hosting
+        window.setIsVisible(false)
+        hosting.layoutSubtreeIfNeeded()
+
+        let fitting = hosting.fittingSize
+        hosting.frame = NSRect(origin: .zero, size: fitting)
+        window.setContentSize(fitting)
+        hosting.layoutSubtreeIfNeeded()
+
+        guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+            fail("failed to create bitmap rep for preview image")
+        }
+        hosting.cacheDisplay(in: hosting.bounds, to: rep)
+        let image = NSImage(size: hosting.bounds.size)
+        image.addRepresentation(rep)
+        return image
+    }
+}
+
+func pngData(_ image: NSImage) -> Data {
+    guard let tiff = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiff),
+          let png = bitmap.representation(using: .png, properties: [:])
+    else { fail("failed to encode preview image as PNG") }
+    return png
+}
+
+func renderPNG(_ view: some View) -> Data {
+    pngData(renderNSImage(view))
+}
+
+func write(_ data: Data, to path: String) {
+    do {
+        try data.write(to: URL(fileURLWithPath: path))
+    } catch {
+        fail("failed to write PNG to \(path): \(error)")
+    }
+    print("design-preview: wrote \(path)")
+}
+
+/// One labelled cell in the contact sheet: a caption above the rendered
+/// device, both on a plain light background so the case/screen colors read
+/// against a neutral surface rather than each other.
+struct SheetCell: View {
+    let label: String
+    let state: PagerDeviceState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(.black.opacity(0.75))
+            PagerDeviceView(state: state)
+        }
+    }
+}
+
+/// Every screen color × case color (7 × 2 = 14) plus each named state, one
+/// PNG for the whole grid.
+///
+/// Each labelled cell is rendered to its own `NSImage` **independently**
+/// (`renderNSImage`, small tree) and then composited onto one big canvas by
+/// hand — deliberately NOT one giant SwiftUI tree of 19 nested devices fed to
+/// a single `NSHostingView`. A first attempt did exactly that and it silently
+/// mis-measured: `NSHostingView.fittingSize` under-reported the height of the
+/// `long`-state cell's wrapping `TextField` once enough sibling content
+/// (five rows, 19 devices, most with their own `TextField`) was in the same
+/// tree, clipping it to ~3 lines instead of the 7 its content needs — even
+/// though that exact cell measures correctly in isolation. Manual compositing
+/// sidesteps the whole question: every cell is a small tree of the kind
+/// already proven correct by the per-state renders, so there is nothing left
+/// for a large-tree measurement bug to get wrong.
+func renderContactSheet() -> Data {
+    let colorCells: [(String, PagerDeviceState)] = CaseColor.allCases.flatMap { caseColor in
+        ScreenColor.allCases.map { screenColor in
+            ("\(caseColor.rawValue) / \(screenColor.rawValue)",
+             PagerDeviceState(screenColor: screenColor, caseColor: caseColor, text: "dinner at 7?"))
+        }
+    }
+    let stateCells: [(String, PagerDeviceState)] = knownStates.map { name in
+        ("state: \(name)", deviceState(forNamedState: name, caseColor: .darkGrey, screenColor: .green))
+    }
+    let cells = colorCells + stateCells
+
+    let columns = 4
+    let padding: CGFloat = 28
+    let gutter: CGFloat = 28
+    let titleHeight: CGFloat = 30
+
+    let cellImages = cells.map { label, state in renderNSImage(SheetCell(label: label, state: state)) }
+    let rows = stride(from: 0, to: cellImages.count, by: columns).map {
+        Array(cellImages[$0..<min($0 + columns, cellImages.count)])
+    }
+
+    let columnWidth = cellImages.map(\.size.width).max() ?? 360
+    let rowHeights = rows.map { row in row.map(\.size.height).max() ?? 0 }
+    let canvasWidth = padding * 2 + CGFloat(columns) * columnWidth + CGFloat(columns - 1) * gutter
+    let canvasHeight = padding * 2 + titleHeight + rowHeights.reduce(0, +) + CGFloat(max(0, rows.count - 1)) * gutter
+
+    let canvas = NSImage(size: NSSize(width: canvasWidth, height: canvasHeight))
+    canvas.lockFocus()
+    NSColor(white: 0.92, alpha: 1).setFill()
+    NSRect(origin: .zero, size: canvas.size).fill()
+
+    let titleAttrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 16, weight: .bold),
+        .foregroundColor: NSColor.black,
+    ]
+    ("pager — skeuomorphic contact sheet" as NSString).draw(
+        at: NSPoint(x: padding, y: canvasHeight - padding - titleHeight + 6), withAttributes: titleAttrs)
+
+    // NSImage drawing is bottom-up (Quartz convention); walk rows top-to-bottom
+    // by tracking a descending `y` cursor rather than fighting the coordinate
+    // system. Cells are top-aligned within their row (matching `HStack(alignment:
+    // .top)`): each cell's own top sits at `rowTopY`, so only the tallest cell in
+    // the row reaches the row's bottom edge — shorter cells (e.g. "state: empty"
+    // sharing a row with "state: long") leave blank space below them, not above.
+    var y = canvasHeight - padding - titleHeight
+    for (row, rowHeight) in zip(rows, rowHeights) {
+        let rowTopY = y
+        var x = padding
+        for cellImage in row {
+            let cellY = rowTopY - cellImage.size.height
+            cellImage.draw(in: NSRect(x: x, y: cellY, width: cellImage.size.width, height: cellImage.size.height))
+            x += columnWidth + gutter
+        }
+        y = rowTopY - rowHeight - gutter
+    }
+
+    canvas.unlockFocus()
+    return pngData(canvas)
+}
+
+// MARK: - Entry point
+
+let options = parseArguments(Array(CommandLine.arguments.dropFirst()))
+
+if options.sheet {
+    write(renderContactSheet(), to: options.outPath)
+} else if let stateName = options.stateName {
+    let state = deviceState(forNamedState: stateName, caseColor: options.caseColor, screenColor: options.screenColor)
+    write(renderPNG(PagerDeviceView(state: state)), to: options.outPath)
+} else if let pressedKey = options.pressedKey {
+    // Keys-focused debug render (predates PagerDeviceView, still useful for
+    // judging a single key's pressed look in isolation) — bypasses
+    // PagerDeviceView since forcing one key's pressed state isn't part of its
+    // props/callbacks surface.
+    let preview = PagerShell(palette: options.caseColor.palette, pressedKey: pressedKey) {
+        LCDPanel(palette: options.screenColor.palette) {
+            Text("dinner at 7?")
+                .font(.system(size: 14, weight: .medium, design: .monospaced))
+        }
+    }
+    .frame(width: 360)
+    write(renderPNG(preview), to: options.outPath)
+} else {
+    let state = PagerDeviceState(screenColor: options.screenColor, caseColor: options.caseColor, text: "dinner at 7?")
+    write(renderPNG(PagerDeviceView(state: state)), to: options.outPath)
+}
