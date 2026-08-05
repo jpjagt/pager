@@ -21,13 +21,19 @@
 - `design-preview` must **never** ship — keep it out of `make bundle`.
 - All new user-facing copy is **lowercase**, matching existing UI strings ("type a message…", "quit pager").
 - Every new device view gets an `.accessibilityIdentifier()`.
-- **Delete replaced code — never comment it out, deprecate it, or leave a
-  compatibility shim.** The app is in private beta, so there are no external
-  consumers to keep working. When a task says a file or function is replaced, it
-  is *removed* in that same task. Dead code left behind is a plan failure.
-  (The one thing that is *not* legacy-removal: tolerant decoding of previously
-  saved `UserDefaults` links in Task 2. Beta users have real pagers stored on
-  disk; throwing on decode would wipe them.)
+- **No legacy code survives to the end of the plan.** The app is in private beta,
+  so there are no external consumers to keep working. Replaced code is *deleted*,
+  not commented out, deprecated, or left behind a compatibility flag. Superseded
+  files are removed in the task that supersedes them.
+  - **Transitional stubs between tasks are fine** — a call site temporarily
+    wired to a placeholder so the build stays green until its owning task lands
+    is expected, not a violation. It must carry a comment naming the task that
+    resolves it, and that task must remove it. Reviewers should not flag these.
+  - Not legacy-removal: tolerant decoding of previously saved `UserDefaults`
+    links (Task 2). Beta users have real pagers on disk; throwing on decode
+    would wipe them.
+  - **Task 12 verifies the end state**: no stub, TODO, or dead reference from
+    this plan remains.
 
 ## Why `PagerUI` is a separate target (read before Task 3)
 
@@ -519,6 +525,7 @@ no longer has `colorHex`; the Commands section gains `design-preview`.
 - [ ] **Step 1:** Implement dismissed-version persistence.
 - [ ] **Step 2:** Verify: dismiss the banner, relaunch, it stays hidden; simulate a newer version and confirm it reappears.
 - [ ] **Step 3:** Update `AGENTS.md` (`CLAUDE.md` is a symlink — edit `AGENTS.md`).
+- [ ] **Step 3b:** Verify no legacy remains from this plan: `grep -rn "colorHex\|PopoverView\|Chrome/" --include=*.swift .` is empty, and every transitional stub comment added in earlier tasks is gone.
 - [ ] **Step 4:** Run `swift test` and `swift run e2e`.
 - [ ] **Step 5:** `make bundle` and confirm the app launches from `dist/Pager.app` and contains no `design-preview`.
 - [ ] **Step 6:** Commit.
