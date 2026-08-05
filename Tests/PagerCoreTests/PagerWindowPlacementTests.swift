@@ -40,6 +40,95 @@ final class PagerWindowPlacementTests: XCTestCase {
         XCTAssertTrue(visibleFrame.contains(frame), "fallback frame \(frame) escaped visibleFrame \(visibleFrame)")
     }
 
+    /// The regression this file previously could not catch: the fallback used
+    /// to derive its cascade index from two compile-time constants, so every
+    /// overflow window landed on the identical anchor and only the topmost one
+    /// was clickable. `contains` alone passes for a stack of identical frames —
+    /// distinctness is the property that matters.
+    func testFallbackCascadesToDistinctFramesWhenScreenIsFull() {
+        let full = tiledOccupied()
+        var frames: [CGRect] = []
+        // Each successive overflow window sees one more pager already open.
+        for extra in 0..<8 {
+            let occupied = full + Array(repeating: full[0], count: extra)
+            let frame = PagerWindowPlacement.frame(size: size, in: visibleFrame, avoiding: occupied)
+            XCTAssertTrue(visibleFrame.contains(frame), "fallback frame \(frame) escaped \(visibleFrame)")
+            frames.append(frame)
+        }
+        XCTAssertEqual(Set(frames.map { "\($0)" }).count, frames.count,
+                       "overflow windows stacked on the same anchor: \(frames)")
+    }
+
+    func testFallbackStaysInsideEvenOnAScreenBarelyBiggerThanTheDevice() {
+        // No room to cascade: every slot must still be the (single) in-frame one.
+        let tight = CGRect(x: 10, y: 20, width: size.width + 8, height: size.height + 8)
+        let full = [CGRect(x: 10, y: 20, width: 1000, height: 1000)]
+        for extra in 0..<5 {
+            let occupied = full + Array(repeating: full[0], count: extra)
+            let frame = PagerWindowPlacement.frame(size: size, in: tight, avoiding: occupied)
+            XCTAssertTrue(tight.contains(frame), "frame \(frame) escaped tight frame \(tight)")
+        }
+    }
+
+    // MARK: - clamp
+
+    func testClampLeavesAnAlreadyContainedRectAlone() {
+        let rect = CGRect(x: 200, y: 300, width: 220, height: 320)
+        XCTAssertEqual(PagerWindowPlacement.clamp(rect, in: visibleFrame), rect)
+    }
+
+    func testClampPushesAGrownDeviceBackAboveTheBottomEdge() {
+        // Parked low with a one-line message, then an image lands: the device
+        // grows downward and its key row falls off the bottom of the screen.
+        let grown = CGRect(x: 900, y: -270, width: 220, height: 380)
+        let clamped = PagerWindowPlacement.clamp(grown, in: visibleFrame)
+        XCTAssertTrue(visibleFrame.contains(clamped))
+        XCTAssertEqual(clamped.minY, visibleFrame.minY)
+        XCTAssertEqual(clamped.minX, grown.minX) // horizontally untouched
+        XCTAssertEqual(clamped.size, grown.size)
+    }
+
+    func testClampPullsARectRememberedOnADetachedDisplayFullyOnScreen() {
+        // Overlaps the built-in screen by a few points — `intersects` was true,
+        // which is exactly why containment is the test that matters.
+        let stray = CGRect(x: 1435, y: 895, width: 220, height: 320)
+        let clamped = PagerWindowPlacement.clamp(stray, in: visibleFrame)
+        XCTAssertTrue(visibleFrame.contains(clamped))
+        XCTAssertEqual(clamped.maxX, visibleFrame.maxX)
+        XCTAssertEqual(clamped.maxY, visibleFrame.maxY)
+    }
+
+    func testClampPinsAnOversizedRectSoTheKeyRowStaysReachable() {
+        let tall = CGRect(x: -50, y: -100, width: 2000, height: 1200)
+        let clamped = PagerWindowPlacement.clamp(tall, in: visibleFrame)
+        XCTAssertEqual(clamped.minX, visibleFrame.minX)
+        XCTAssertEqual(clamped.minY, visibleFrame.minY) // bottom edge = the keys
+        XCTAssertEqual(clamped.size, tall.size)
+    }
+
+    func testClampRespectsANonZeroOriginVisibleFrame() {
+        let shifted = CGRect(x: -1440, y: 200, width: 1440, height: 900)
+        let clamped = PagerWindowPlacement.clamp(
+            CGRect(x: -2000, y: 0, width: 220, height: 320), in: shifted)
+        XCTAssertTrue(shifted.contains(clamped))
+        XCTAssertEqual(clamped.origin, CGPoint(x: shifted.minX, y: shifted.minY))
+    }
+
+    /// Tiles `visibleFrame` so no candidate the stepping search tries is free.
+    private func tiledOccupied() -> [CGRect] {
+        var occupied: [CGRect] = []
+        var y = visibleFrame.minY
+        while y < visibleFrame.maxY {
+            var x = visibleFrame.minX
+            while x < visibleFrame.maxX {
+                occupied.append(CGRect(x: x, y: y, width: size.width, height: size.height))
+                x += size.width
+            }
+            y += size.height
+        }
+        return occupied
+    }
+
     func testReturnedSizeAlwaysEqualsRequestedSize() {
         let occupied = [CGRect(x: 1000, y: 500, width: 220, height: 320)]
         let frame = PagerWindowPlacement.frame(size: size, in: visibleFrame, avoiding: occupied)

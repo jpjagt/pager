@@ -47,6 +47,9 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
     var onClosed: (() -> Void)?
 
     private var persistWork: DispatchWorkItem?
+    /// The dragged-to rect waiting to be written, cleared by whichever of the
+    /// debounce timer and `windowWillClose` gets there first — see `flushFrame`.
+    private var pendingFrame: CGRect?
     /// True while `show()` positions the window, so our own `setFrame` doesn't
     /// look like a user drag and persist a placement-derived frame.
     private var isPlacing = false
@@ -118,11 +121,14 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
     func show(persistedVisibleFrame: CGRect?, avoiding occupied: [CGRect]) {
         let size = deviceSize
         let visible: CGRect
-        if let persisted = persistedVisibleFrame, Self.isOnScreen(persisted) {
+        if let persisted = persistedVisibleFrame, let screen = Self.screen(for: persisted) {
             // Keep the top-left corner the user dragged it to; the height is
-            // whatever the current content needs.
-            visible = CGRect(x: persisted.minX, y: persisted.maxY - size.height,
-                             width: size.width, height: size.height)
+            // whatever the current content needs — then clamp, because that
+            // height is not the one the pager was parked with (an image may
+            // have landed since) and the bottom of the device carries the keys.
+            let wanted = CGRect(x: persisted.minX, y: persisted.maxY - size.height,
+                                width: size.width, height: size.height)
+            visible = PagerWindowPlacement.clamp(wanted, in: screen.visibleFrame)
         } else {
             let screen = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? .zero
             visible = PagerWindowPlacement.frame(size: size, in: screen, avoiding: occupied)
@@ -145,17 +151,49 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
         DispatchQueue.main.async { [weak self] in self?.reanchor() }
     }
 
-    /// Restores the anchored top edge after a content-driven resize.
+    /// Restores the anchored top edge after a content-driven resize, and keeps
+    /// the grown device on screen: a pager parked low that receives an image
+    /// grows ~270 pt downward, which would push its key row past the bottom of
+    /// the screen, unreachable and undraggable.
     private func reanchor() {
-        guard let top = anchoredTop, abs(frame.maxY - top) > 0.5 else { return }
+        guard let top = anchoredTop else { return }
+        var visible = CGRect(x: frame.minX, y: top - frame.height,
+                             width: frame.width, height: frame.height)
+            .insetBy(dx: Self.shadowMargin, dy: Self.shadowMargin)
+        if let screen = Self.screen(for: visible) ?? NSScreen.main {
+            // Vertically only: the device's width never changes with content,
+            // so a horizontal nudge here could only be fighting a drag the
+            // user meant. Growth is downward, and that is what has to be caught.
+            visible.origin.y = PagerWindowPlacement.clamp(visible, in: screen.visibleFrame).origin.y
+        }
+        let target = Self.windowFrame(forVisibleDevice: visible)
+        guard abs(target.minX - frame.minX) > 0.5 || abs(target.minY - frame.minY) > 0.5 else { return }
         isPlacing = true
-        setFrameOrigin(NSPoint(x: frame.minX, y: top - frame.height))
+        setFrameOrigin(target.origin)
         isPlacing = false
+        // A clamp moves the top edge; that clamped top is the new anchor, or
+        // the next resize would pull the device straight back off-screen.
+        anchoredTop = target.maxY
     }
 
-    /// Whether a remembered frame still lands on an attached display.
-    private static func isOnScreen(_ rect: CGRect) -> Bool {
-        NSScreen.screens.contains { $0.visibleFrame.intersects(rect) }
+    /// The attached display a remembered device rect belongs to: the one it
+    /// overlaps most. Nil when it overlaps none — an unplugged external
+    /// display — in which case the pager is placed afresh rather than restored
+    /// into nowhere. Overlap is only how the *screen* is chosen; the rect
+    /// itself is then clamped to fit inside it.
+    private static func screen(for rect: CGRect) -> NSScreen? {
+        var best: NSScreen?
+        var bestArea: CGFloat = 0
+        for screen in NSScreen.screens {
+            let overlap = screen.visibleFrame.intersection(rect)
+            guard !overlap.isNull else { continue }
+            let area = overlap.width * overlap.height
+            if area > bestArea {
+                bestArea = area
+                best = screen
+            }
+        }
+        return best
     }
 
     /// Puts the caret in the message field on open, so the pager can be typed
@@ -207,16 +245,28 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
     func windowDidMove(_ notification: Notification) {
         guard !isPlacing else { return }
         anchoredTop = frame.maxY
+        pendingFrame = visibleDeviceFrame
         persistWork?.cancel()
-        let rect = visibleDeviceFrame
-        let work = DispatchWorkItem { [weak self] in self?.onFrameChanged?(rect) }
+        let work = DispatchWorkItem { [weak self] in self?.flushFrame() }
         persistWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.persistDelay, execute: work)
     }
 
-    func windowWillClose(_ notification: Notification) {
+    /// Writes the pending drag — at most once. The debounce timer and
+    /// `windowWillClose` both land here, and whoever arrives first clears
+    /// `pendingFrame`, so the other is a no-op: a drag finished 50 ms before
+    /// Return is still saved, and a timer firing afterwards can't re-write a
+    /// stale rect.
+    private func flushFrame() {
         persistWork?.cancel()
         persistWork = nil
+        guard let rect = pendingFrame else { return }
+        pendingFrame = nil
+        onFrameChanged?(rect)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        flushFrame()
         onClosed?()
     }
 }
