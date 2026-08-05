@@ -92,6 +92,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RunLoop.main.add(timer, forMode: .modalPanel)
     }
 
+    /// ⌘Q, a Sparkle restart-for-update, logout, shutdown. An open pager window
+    /// can hold a typed-but-unsent draft for hours (the popover it replaced was
+    /// dismissed, and so committed, within seconds), and quitting is not the ✕
+    /// key — it must not throw the message away.
+    ///
+    /// `commit()` is guarded by `dirty`, so this is a no-op for clean sessions.
+    /// The flush is synchronous because the commit only *schedules* a PUT
+    /// (~300 ms debounce plus an async task); the process would be gone first.
+    func applicationWillTerminate(_ notification: Notification) {
+        models.values.forEach { $0.commit() }
+        engines.values.forEach { $0.flushSynchronously() }
+    }
+
     @objc private func didWake() {
         reconnectAll()
     }
@@ -211,7 +224,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @discardableResult
     private func openWindow(for linkId: UUID) -> PagerWindow? {
+        // An entry here means a *visible* window: `onClosed` always clears
+        // `windows[linkId]`. So this is a raise, and deliberately skips
+        // placement (the pager is already where the user put it) and the
+        // open-time focus/anchor work.
         if let existing = windows[linkId] {
+            assert(existing.isVisible, "a window left in `windows` must be visible")
             NSApp.activateForWindow()
             existing.makeKeyAndOrderFront(nil)
             return existing

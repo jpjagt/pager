@@ -120,6 +120,27 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(crypto.decrypt(transport.puts[0].ct), "hello")
     }
 
+    /// The quit path: `applicationWillTerminate` commits open drafts and must
+    /// see them on the wire before it returns — a scheduled Task would die with
+    /// the process. No `await` here on purpose: the assertion holds *without*
+    /// ever yielding the main actor, which is the whole point.
+    func testFlushSynchronouslyPutsBeforeReturning() {
+        clock = 5_000
+        engine.commitText("leaving in 20, meet at the door")
+        engine.flushSynchronously(timeout: 3)
+        XCTAssertEqual(transport.puts.count, 1)
+        XCTAssertEqual(transport.puts[0].writtenAt, 5_000)
+        XCTAssertEqual(crypto.decrypt(transport.puts[0].ct), "leaving in 20, meet at the door")
+    }
+
+    func testFlushSynchronouslyIsANoOpWithNothingPending() async {
+        engine.commitText("sent")
+        await settle()
+        XCTAssertEqual(transport.puts.count, 1)
+        engine.flushSynchronously(timeout: 3)
+        XCTAssertEqual(transport.puts.count, 1, "flushed an already-landed value again")
+    }
+
     func testStreamDropSetsReconnecting() async {
         transport.emit(node: remote("hi", at: 1))
         await settle()

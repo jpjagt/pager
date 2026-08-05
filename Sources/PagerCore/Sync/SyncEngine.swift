@@ -130,6 +130,41 @@ public final class SyncEngine: ContentCommitter {
     /// Text convenience (tests + e2e call sites).
     public func commitText(_ text: String) { commitContent(.text(text)) }
 
+    /// Blocks the caller until the pending write has landed, or `timeout`
+    /// elapses. **Only for app termination.** Every other flush goes through
+    /// the async chain, but at `applicationWillTerminate` the process is gone
+    /// long before a Task's PUT leaves the machine — the normal path debounces
+    /// and then awaits, and nothing awaits the app's own death.
+    ///
+    /// The PUT runs detached precisely so it does *not* need this actor: the
+    /// caller is holding the main thread inside `wait()`, so anything that
+    /// hopped back to the main actor to finish would deadlock instead of
+    /// saving the draft.
+    public func flushSynchronously(timeout: TimeInterval = 3) {
+        // Stand down the async machinery first; it can only race this write
+        // with the identical value, and it will never outlive the process.
+        debounceTask?.cancel()
+        debounceTask = nil
+        flushEpoch += 1
+        flushTask?.cancel()
+        flushTask = nil
+
+        guard let value = pending else { return }
+        pending = nil
+        let fields = Self.ctFields(value)
+        event("flush.sync_begin", writtenAt: value.writtenAt, ct: fields.ct, ctLen: fields.ctLen)
+
+        let transport = self.transport
+        let pathId = self.pathId
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            try? await transport.put(pathId: pathId, value: value)
+            done.signal()
+        }
+        let result = done.wait(timeout: .now() + timeout)
+        event(result == .success ? "flush.sync_end" : "flush.sync_timeout", writtenAt: value.writtenAt)
+    }
+
     /// Test hook: inject a pending offline edit without scheduling a flush.
     public func simulatePendingForTesting(writtenAt: Int64, text: String) {
         guard let ct = try? crypto.encrypt(text) else { return }

@@ -188,6 +188,7 @@ Design: `docs/superpowers/specs/2026-06-23-sync-logging-design.md`.
 - **img log events carry `ct_len`, never the image ciphertext.**
 - Writes apply optimistically to the menu bar immediately; PUTs debounce ~300ms. Max text length 500 chars.
 - **Committing is no longer tied to one gesture.** `EditorSession` (the pure editing state machine behind the pager window) exposes explicit `commit()` / `clear()` / `discard()` verbs, driven by the send / clear / close keys respectively (`LinkViewModel.submit()`/`clear()`/`dismiss()`): send pushes the draft and closes the window; clear empties the draft but stays open, still editing; close abandons the edit, reverting to the last cached content (whatever landed remotely mid-edit wins — consistent with LWW). Only `commit()` calls the `ContentCommitter` seam and updates the cache; `clear()`/`discard()` never push to the network.
+- **Quitting commits, it does not discard.** A pager window can hold a draft for hours, so `applicationWillTerminate` commits every open session and then calls `SyncEngine.flushSynchronously()` — the debounced/async PUT would otherwise never leave the machine. Quit is not the ✕ key.
 
 ## Testing approach
 
