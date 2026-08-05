@@ -12,7 +12,7 @@ public struct PagerShell<Content: View>: View {
     private let cornerRadius: CGFloat
     private let content: Content
 
-    public init(palette: CasePalette, cornerRadius: CGFloat = 26, @ViewBuilder content: () -> Content) {
+    public init(palette: CasePalette, cornerRadius: CGFloat = 44, @ViewBuilder content: () -> Content) {
         self.palette = palette
         self.cornerRadius = cornerRadius
         self.content = content()
@@ -28,15 +28,18 @@ public struct PagerShell<Content: View>: View {
             noiseOverlay
             bevel
             content
-                .padding(cornerRadius * 0.7)
+                .padding(cornerRadius * 0.55)
         }
         .accessibilityIdentifier("pager-shell")
     }
 
-    /// The case fill: a top-to-bottom gradient plus a native inner shadow for
-    /// a touch of depth. A validation spike showed the inner shadow alone
-    /// reads as almost nothing — it's kept here as a subtle assist, with the
-    /// real bevel illusion coming from the explicit strokes in `bevel`.
+    /// The case fill: a plain top-to-bottom gradient. A validation spike
+    /// (round 1 of this task's visual gate) showed the native
+    /// `.shadow(.inner(...))` assist bled well past the edge into a
+    /// full-width wash — with `shellBottom` already a dark grey, the two
+    /// stacked into a heavy vignette that read as two horizontal stripes
+    /// rather than an edge. Dropped entirely; the whole bevel illusion now
+    /// comes from the single stroked ring in `bevel`.
     private func body(_ shape: RoundedRectangle) -> some View {
         shape
             .fill(
@@ -44,52 +47,53 @@ public struct PagerShell<Content: View>: View {
                     colors: [color(palette.shellTop), color(palette.shellBottom)],
                     startPoint: .top, endPoint: .bottom
                 )
-                .shadow(.inner(color: .black.opacity(0.3), radius: 3, x: 0, y: 2))
-                .shadow(.inner(color: .white.opacity(0.25), radius: 1, x: 0, y: -1))
             )
     }
 
-    /// The hard bevel: `edgeHighlight` stroked along the top inner edge,
-    /// `edgeShadow` along the bottom, each hard-masked to its half so the
-    /// transition reads as a distinct light-catch / shadow-pool rather than a
-    /// soft gradient smear.
+    /// The bevel: a single thin (~1.5pt) stroke run around the *whole*
+    /// perimeter, colored by an `AngularGradient` centered on the shape.
+    /// `edgeHighlight` peaks where the sweep passes the top-left corner,
+    /// `edgeShadow` peaks at the bottom-right corner, and the two stops blend
+    /// continuously the rest of the way around (`AngularGradient` wraps its
+    /// last stop back into its first) — so the line is a light-catch at one
+    /// corner fading smoothly into a shadow-pool at the opposite corner,
+    /// with no hard seam anywhere. This replaced a pair of `strokeBorder`s
+    /// each masked to a top/bottom half with a hard 45%/55% stop: the mask's
+    /// discontinuity was exactly the horizontal line cutting across the face
+    /// that the visual gate flagged. A single continuous angular sweep can't
+    /// produce that seam by construction.
+    ///
+    /// The stop locations (0.307/0.807, not the "square" 0.375/0.875 that a
+    /// naive 45°/135° guess gives) are tuned for this landscape shape: the
+    /// bearing (clockwise from north) from the shape's center to the corner
+    /// arcs' centers depends on the aspect ratio, and this device is much
+    /// wider than it is tall. Re-tune if `cornerRadius` or the shell's aspect
+    /// ratio changes materially.
     private var bevel: some View {
-        ZStack {
-            shape
-                .strokeBorder(color(palette.edgeHighlight), lineWidth: 5)
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .white, location: 0),
-                            .init(color: .white, location: 0.45),
-                            .init(color: .clear, location: 0.55),
-                        ],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                )
-            shape
-                .strokeBorder(color(palette.edgeShadow), lineWidth: 5)
-                .mask(
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0.45),
-                            .init(color: .white, location: 0.55),
-                            .init(color: .white, location: 1),
-                        ],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                )
-        }
+        shape
+            .strokeBorder(
+                AngularGradient(
+                    gradient: Gradient(stops: [
+                        .init(color: color(palette.edgeShadow), location: 0.307),
+                        .init(color: color(palette.edgeHighlight), location: 0.807),
+                    ]),
+                    center: .center
+                ),
+                lineWidth: 1.5
+            )
     }
 
     /// Procedural grain, tiled across the whole case at low opacity with
     /// overlay blending — this is what sells "molded plastic" instead of
-    /// "flat rounded rectangle." See `NoiseTexture` for why it's cached
-    /// rather than regenerated per frame.
+    /// "flat rounded rectangle." `.interpolation(.none)` keeps the coarse
+    /// grain blocky when it's scaled up from `NoiseTexture`'s low-res source
+    /// instead of being smoothed back into invisibility. See `NoiseTexture`
+    /// for why the tile is cached rather than regenerated per frame.
     private var noiseOverlay: some View {
         Image(nsImage: NoiseTexture.tile)
+            .interpolation(.none)
             .resizable(resizingMode: .tile)
-            .opacity(0.10)
+            .opacity(0.16)
             .blendMode(.overlay)
             .clipShape(shape)
             .allowsHitTesting(false)

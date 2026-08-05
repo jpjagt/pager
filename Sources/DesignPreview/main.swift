@@ -41,22 +41,37 @@ func parseArguments(_ arguments: [String]) -> Options {
 }
 
 /// Placeholder content standing in for the LCD/keys that arrive in later
-/// tasks — this task only proves the case renders and looks molded.
+/// tasks — this task only proves the CASE renders and looks molded. A
+/// near-full-frame black box (round 1's original placeholder) made the case
+/// impossible to judge since it visually dominated the render; a thin
+/// outline plus a small label proves the shell without competing with it.
+/// The real LCD (not black) is Task 4's job.
 struct PlaceholderContent: View {
     var body: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(Color.black.opacity(0.82))
-            .aspectRatio(4.0 / 3.0, contentMode: .fit)
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
+            .overlay(
+                Text("LCD")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white.opacity(0.28))
+            )
+            .aspectRatio(16.0 / 7.0, contentMode: .fit)
     }
 }
 
 let options = parseArguments(Array(CommandLine.arguments.dropFirst()))
 let palette = options.caseColor.palette
 
+// A pager is a landscape device: the real app renders it in a 360pt-wide
+// window whose height follows content. 360×190pt (720×380px at scale 2) is
+// the fixed reference size for this preview — round 1 of the visual gate
+// found the previous 300×460 *portrait* frame was skewing every other
+// judgement (bevel, corner radius, content proportions all read wrong on a
+// rectangle turned the wrong way).
 let preview = PagerShell(palette: palette) {
     PlaceholderContent()
 }
-.frame(width: 300, height: 460)
+.frame(width: 360, height: 190)
 
 let pngData: Data? = MainActor.assumeIsolated {
     let renderer = ImageRenderer(content: preview)
