@@ -15,6 +15,7 @@ func fail(_ message: String) -> Never {
 
 struct Options {
     var caseColor: CaseColor = .darkGrey
+    var screenColor: ScreenColor?
     var outPath: String = "./preview.png"
 }
 
@@ -30,6 +31,13 @@ func parseArguments(_ arguments: [String]) -> Options {
                 fail("unknown case color '\(value)' — expected one of: \(known)")
             }
             options.caseColor = color
+        case "--screen":
+            guard let value = iterator.next() else { fail("--screen requires a value") }
+            guard let color = ScreenColor(rawValue: value) else {
+                let known = ScreenColor.allCases.map(\.rawValue).joined(separator: ", ")
+                fail("unknown screen color '\(value)' — expected one of: \(known)")
+            }
+            options.screenColor = color
         case "--out":
             guard let value = iterator.next() else { fail("--out requires a value") }
             options.outPath = value
@@ -59,6 +67,36 @@ struct PlaceholderContent: View {
     }
 }
 
+/// Task 4's content: a lit `LCDPanel` with sample message text plus a
+/// stacked pair of inverted-video `Banner`s (an offline notice above an
+/// update prompt), so both new views are visible in one render. The two
+/// banners are separated by `spacing: 1` — the "one LCD pixel" gap the task
+/// brief calls for.
+struct ScreenContent: View {
+    let palette: ScreenPalette
+
+    var body: some View {
+        LCDPanel(palette: palette) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("dinner at 7?")
+                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                Spacer(minLength: 0)
+                VStack(spacing: 1) {
+                    Banner(palette: palette, style: .plain("offline — retrying"))
+                    Banner(
+                        palette: palette,
+                        style: .action([
+                            Banner.Segment("update available —"),
+                            Banner.Segment("update now") {},
+                        ])
+                    )
+                }
+            }
+        }
+        .aspectRatio(16.0 / 7.0, contentMode: .fit)
+    }
+}
+
 let options = parseArguments(Array(CommandLine.arguments.dropFirst()))
 let palette = options.caseColor.palette
 
@@ -69,7 +107,11 @@ let palette = options.caseColor.palette
 // judgement (bevel, corner radius, content proportions all read wrong on a
 // rectangle turned the wrong way).
 let preview = PagerShell(palette: palette) {
-    PlaceholderContent()
+    if let screenColor = options.screenColor {
+        ScreenContent(palette: screenColor.palette)
+    } else {
+        PlaceholderContent()
+    }
 }
 .frame(width: 360, height: 190)
 
