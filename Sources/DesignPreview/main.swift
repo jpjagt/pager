@@ -17,6 +17,7 @@ struct Options {
     var caseColor: CaseColor = .darkGrey
     var screenColor: ScreenColor?
     var outPath: String = "./preview.png"
+    var pressedKey: PagerKeyRow.Key?
 }
 
 func parseArguments(_ arguments: [String]) -> Options {
@@ -41,6 +42,15 @@ func parseArguments(_ arguments: [String]) -> Options {
         case "--out":
             guard let value = iterator.next() else { fail("--out requires a value") }
             options.outPath = value
+        case "--pressed":
+            guard let value = iterator.next() else { fail("--pressed requires a value") }
+            switch value {
+            case "clear": options.pressedKey = .clear
+            case "menu": options.pressedKey = .menu
+            case "close": options.pressedKey = .close
+            case "send": options.pressedKey = .send
+            default: fail("unknown key '\(value)' — expected one of: clear, menu, close, send")
+            }
         default:
             fail("unknown argument '\(arg)'")
         }
@@ -101,19 +111,21 @@ let options = parseArguments(Array(CommandLine.arguments.dropFirst()))
 let palette = options.caseColor.palette
 
 // A pager is a landscape device: the real app renders it in a 360pt-wide
-// window whose height follows content. 360×190pt (720×380px at scale 2) is
-// the fixed reference size for this preview — round 1 of the visual gate
-// found the previous 300×460 *portrait* frame was skewing every other
-// judgement (bevel, corner radius, content proportions all read wrong on a
-// rectangle turned the wrong way).
-let preview = PagerShell(palette: palette) {
+// window whose height follows content. 360×190pt was this preview's fixed
+// reference size through Task 4, but Task 5 adds a physical key row + the
+// debossed wordmark below the LCD — at 190pt tall the LCD alone filled
+// almost the whole case with no room left for either, so the frame grows to
+// 360×236 (720×472px at scale 2) to give the bottom row real space. Task 6
+// makes height content-driven; this is just enough to make the row
+// judgeable.
+let preview = PagerShell(palette: palette, pressedKey: options.pressedKey) {
     if let screenColor = options.screenColor {
         ScreenContent(palette: screenColor.palette)
     } else {
         PlaceholderContent()
     }
 }
-.frame(width: 360, height: 190)
+.frame(width: 360, height: 236)
 
 let pngData: Data? = MainActor.assumeIsolated {
     let renderer = ImageRenderer(content: preview)

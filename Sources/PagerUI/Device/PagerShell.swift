@@ -11,10 +11,23 @@ public struct PagerShell<Content: View>: View {
     private let palette: CasePalette
     private let cornerRadius: CGFloat
     private let content: Content
+    private let pressedKey: PagerKeyRow.Key?
+    private let onClear: () -> Void
+    private let onMenu: () -> Void
+    private let onClose: () -> Void
+    private let onSend: () -> Void
 
-    public init(palette: CasePalette, cornerRadius: CGFloat = 18, @ViewBuilder content: () -> Content) {
+    public init(palette: CasePalette, cornerRadius: CGFloat = 18, pressedKey: PagerKeyRow.Key? = nil,
+                onClear: @escaping () -> Void = {}, onMenu: @escaping () -> Void = {},
+                onClose: @escaping () -> Void = {}, onSend: @escaping () -> Void = {},
+                @ViewBuilder content: () -> Content) {
         self.palette = palette
         self.cornerRadius = cornerRadius
+        self.pressedKey = pressedKey
+        self.onClear = onClear
+        self.onMenu = onMenu
+        self.onClose = onClose
+        self.onSend = onSend
         self.content = content()
     }
 
@@ -27,10 +40,30 @@ public struct PagerShell<Content: View>: View {
             body(shape)
             noiseOverlay
             bevel
-            content
-                .padding(cornerRadius * 0.55)
+            VStack(spacing: 0) {
+                content
+                    .padding(.horizontal, cornerRadius * 0.55)
+                    .padding(.top, cornerRadius * 0.55)
+                Spacer(minLength: 8)
+                keyRow
+                    .padding(.horizontal, cornerRadius * 0.7)
+                    .padding(.bottom, cornerRadius * 0.55)
+            }
         }
         .accessibilityIdentifier("pager-shell")
+    }
+
+    /// The bottom row: the debossed wordmark at the left, the physical keys
+    /// at the right. Laid out together (per the brief) since both read off
+    /// the same `palette` and sit in the same trough at the bottom of the
+    /// case; final proportions are Task 6's job.
+    private var keyRow: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Wordmark(palette: palette)
+            Spacer(minLength: 12)
+            PagerKeyRow(palette: palette, pressed: pressedKey,
+                        onClear: onClear, onMenu: onMenu, onClose: onClose, onSend: onSend)
+        }
     }
 
     /// The case fill: a plain top-to-bottom gradient. A validation spike
@@ -98,6 +131,42 @@ public struct PagerShell<Content: View>: View {
             .clipShape(shape)
             .allowsHitTesting(false)
     }
+
+    private func color(_ hex: String) -> Color {
+        Color(nsColor: TextUtil.color(fromHex: hex) ?? .gray)
+    }
+}
+
+/// The `LIMINAL` brand wordmark, **debossed** into the case rather than
+/// printed on it: the letterforms are filled in the case's own body color
+/// (so they read as the same plastic, not an applied label), with a dark
+/// "inner offset" peeking above each glyph and a 1px `brandHighlight` edge
+/// peeking *below* — the light-below edge is what sells "stamped into
+/// plastic"; the opposite order (light above, dark below) reads as raised
+/// lettering instead. All three copies are the same text at a 1pt vertical
+/// offset from each other, so the case-colored face on top covers all but a
+/// 1px sliver of each of the other two.
+struct Wordmark: View {
+    let palette: CasePalette
+
+    var body: some View {
+        ZStack {
+            text.foregroundColor(highlight).offset(y: 1)   // light lip, below
+            text.foregroundColor(ink).offset(y: -1)         // dark inner shadow, above
+            text.foregroundColor(face)                      // case-colored face, on top
+        }
+        .accessibilityIdentifier("brand-wordmark")
+    }
+
+    private var text: Text {
+        Text("LIMINAL")
+            .font(.system(size: 12, weight: .heavy, design: .rounded))
+            .tracking(1.6)
+    }
+
+    private var face: Color { color(palette.shellBottom) }
+    private var ink: Color { color(palette.brandInk) }
+    private var highlight: Color { color(palette.brandHighlight) }
 
     private func color(_ hex: String) -> Color {
         Color(nsColor: TextUtil.color(fromHex: hex) ?? .gray)
