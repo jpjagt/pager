@@ -12,7 +12,7 @@ public struct PagerShell<Content: View>: View {
     private let cornerRadius: CGFloat
     private let content: Content
 
-    public init(palette: CasePalette, cornerRadius: CGFloat = 44, @ViewBuilder content: () -> Content) {
+    public init(palette: CasePalette, cornerRadius: CGFloat = 18, @ViewBuilder content: () -> Content) {
         self.palette = palette
         self.cornerRadius = cornerRadius
         self.content = content()
