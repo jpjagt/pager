@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windows: [UUID: PagerWindow] = [:]
     private var models: [UUID: LinkViewModel] = [:]
     private var cancellables: Set<AnyCancellable> = []
+    private var appearanceObserver: NSKeyValueObservation?
     private let pathMonitor = NWPathMonitor()
     private var transport: SyncTransport?
     private let syncLog = FileSyncLog(url: AppDelegate.logURL)
@@ -49,6 +50,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(didWake),
             name: NSWorkspace.didWakeNotification, object: nil)
+
+        // The menu bar ink is a resolved color picked for the current
+        // appearance (see `StatusItemController.ink`), so light/dark has to
+        // re-render it — nothing else would.
+        appearanceObserver = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            guard let self else { return }
+            Task { @MainActor in self.renderAll() }
+        }
 
         if store.links.isEmpty {
             showOnboarding()
@@ -107,14 +116,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controllers[id] = nil
             engines[id] = nil
         }
-        for link in links {
-            if controllers[link.id] == nil { addController(for: link) }
-            controllers[link.id]?.render(content: store.cachedContent(id: link.id),
-                                         prefs: link.appearance)
-        }
+        for link in links where controllers[link.id] == nil { addController(for: link) }
+        render(links: links)
         updatePlaceholder(visible: links.isEmpty)
         if links.isEmpty { showOnboarding() }
     }
+
+    private func render(links: [PagerLink]) {
+        for link in links {
+            controllers[link.id]?.render(content: store.cachedContent(id: link.id),
+                                         prefs: link.appearance)
+        }
+    }
+
+    /// Repaints every menu bar item. Needed on a system appearance flip: the
+    /// ink is a color resolved for one appearance, so nothing else would.
+    private func renderAll() { render(links: store.links) }
 
     /// A single 📟 status item shown while no pagers are configured, so the
     /// app stays reachable from the menu bar.

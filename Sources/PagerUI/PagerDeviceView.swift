@@ -147,22 +147,33 @@ public struct PagerDeviceView: View {
         )
     }
 
+    /// The LCD shows the image small and downscaled; tapping it is how you see
+    /// the real thing (Preview, or the page it came from). A `Button` rather
+    /// than `onTapGesture` so the affordance is a real control — reachable by
+    /// keyboard and VoiceOver, not just the mouse.
     @ViewBuilder
     private func imageContent(_ data: Data) -> some View {
         if let pixelSize = ImageCodec.pixelSize(of: data), let nsImage = NSImage(data: data) {
             let layout = ImageDisplayMath.containerLayout(
                 imagePixelSize: pixelSize, containerWidth: Self.lcdContentWidth)
-            ZStack {
-                Color.black.opacity(0.25)
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: layout.imageSize.width, height: layout.imageSize.height)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
+            Button(action: actions.onOpenImage) {
+                ZStack {
+                    Color.black.opacity(0.25)
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: layout.imageSize.width, height: layout.imageSize.height)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
+                .frame(width: layout.containerSize.width, height: layout.containerSize.height)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
             }
-            .frame(width: layout.containerSize.width, height: layout.containerSize.height)
-            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .buttonStyle(.plain)
+            .onHover { inside in
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
             .accessibilityIdentifier("pager-image")
+            .accessibilityLabel("open image")
         }
     }
 

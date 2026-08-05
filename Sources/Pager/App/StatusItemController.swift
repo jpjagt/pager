@@ -39,7 +39,8 @@ final class StatusItemController: NSObject {
 
     private func renderImage(_ data: Data, prefs: AppearancePrefs) {
         guard let button = statusItem.button,
-              let thumbnail = Self.thumbnail(from: data, maxWidth: prefs.maxWidth) else {
+              let thumbnail = Self.thumbnail(from: data, maxWidth: prefs.maxWidth,
+                                             borderColor: Self.ink(prefs)) else {
             renderText("", prefs: prefs) // unreadable cache → placeholder 📟
             return
         }
@@ -58,8 +59,7 @@ final class StatusItemController: NSObject {
         let attributed = NSMutableAttributedString(
             string: display,
             attributes: [.font: NSFont.systemFont(ofSize: prefs.fontSize)])
-        // transitional: Task 10 replaces this with appearance-aware menuBarInk selection
-        let base = TextUtil.color(fromHex: prefs.screenColor.palette.menuBarInkOnLight) ?? .labelColor
+        let base = Self.ink(prefs)
         let color = prefs.opacity < 1 ? base.withAlphaComponent(prefs.opacity) : base
         attributed.addAttribute(
             .foregroundColor, value: color,
@@ -70,6 +70,19 @@ final class StatusItemController: NSObject {
                 range: match.range)
         }
         button.attributedTitle = Self.truncated(attributed, toWidth: prefs.maxWidth)
+    }
+
+    /// The menu bar's ink for this link: its screen color, in the variant made
+    /// for the menu bar background currently in use. Two variants exist because
+    /// one value would vanish on one appearance or the other — the on-*dark*
+    /// variant is the light one. Resolved (not a dynamic color) so the
+    /// `opacity` pref can be applied on top; `AppDelegate` re-renders every
+    /// item when the system appearance flips.
+    static func ink(_ prefs: AppearancePrefs) -> NSColor {
+        let palette = prefs.screenColor.palette
+        let isDark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return TextUtil.color(fromHex: isDark ? palette.menuBarInkOnDark
+                                              : palette.menuBarInkOnLight) ?? .labelColor
     }
 
     /// Drops tail characters (before an ellipsis) until the string fits.
@@ -90,15 +103,16 @@ final class StatusItemController: NSObject {
         return ellipsis
     }
 
-    // Thumbnail geometry: 2pt border in the OS menu-bar text color, 1pt gap,
+    // Thumbnail geometry: 2pt border in the link's menu bar ink, 1pt gap,
     // then the image (~16pt tall) — total 22pt, the status bar thickness.
     static let thumbBorderWidth: CGFloat = 2
     static let thumbBorderGap: CGFloat = 1
     static let thumbInnerHeight: CGFloat = 16
 
-    /// Composes the bordered, aspect-clamped menu bar thumbnail. Drawn via a
-    /// drawingHandler so labelColor adapts to light/dark at draw time.
-    static func thumbnail(from data: Data, maxWidth: Double) -> NSImage? {
+    /// Composes the bordered, aspect-clamped menu bar thumbnail. `borderColor`
+    /// is the same ink the text line takes, so a pager reads as one color
+    /// whether it currently holds text or an image.
+    static func thumbnail(from data: Data, maxWidth: Double, borderColor: NSColor) -> NSImage? {
         guard let source = NSImage(data: data),
               source.size.width > 0, source.size.height > 0 else { return nil }
         let inset = thumbBorderWidth + thumbBorderGap
@@ -112,7 +126,7 @@ final class StatusItemController: NSObject {
             let borderRect = rect.insetBy(dx: thumbBorderWidth / 2, dy: thumbBorderWidth / 2)
             let border = NSBezierPath(roundedRect: borderRect, xRadius: 4, yRadius: 4)
             border.lineWidth = thumbBorderWidth
-            NSColor.labelColor.setStroke()
+            borderColor.setStroke()
             border.stroke()
             let boxRect = rect.insetBy(dx: inset, dy: inset)
             let fitted = Self.fitRect(imageSize: source.size, in: boxRect)

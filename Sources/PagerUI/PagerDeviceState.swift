@@ -61,6 +61,9 @@ public struct PagerDeviceActions {
     public var onMenu: () -> Void
     /// A tap on a detected-URL link banner.
     public var onOpenURL: (URL) -> Void
+    /// A tap on the image on screen — "show me this properly" (the adapter
+    /// opens it in Preview, or opens the source URL for a link preview).
+    public var onOpenImage: () -> Void
     /// "update now" in the update banner.
     public var onUpdateNow: () -> Void
     /// "hide" in the update banner.
@@ -74,6 +77,7 @@ public struct PagerDeviceActions {
         onClear: @escaping () -> Void = {},
         onMenu: @escaping () -> Void = {},
         onOpenURL: @escaping (URL) -> Void = { _ in },
+        onOpenImage: @escaping () -> Void = {},
         onUpdateNow: @escaping () -> Void = {},
         onHideUpdate: @escaping () -> Void = {}
     ) {
@@ -84,6 +88,7 @@ public struct PagerDeviceActions {
         self.onClear = onClear
         self.onMenu = onMenu
         self.onOpenURL = onOpenURL
+        self.onOpenImage = onOpenImage
         self.onUpdateNow = onUpdateNow
         self.onHideUpdate = onHideUpdate
     }

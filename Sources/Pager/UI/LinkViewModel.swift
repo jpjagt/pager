@@ -160,6 +160,19 @@ final class LinkViewModel: ObservableObject {
         if let monitor = pasteMonitor { NSEvent.removeMonitor(monitor) }
     }
 
+    /// A tap on the draft image: write the JPEG to a temp file and hand it to
+    /// the system, which opens it in Preview. The LCD only ever shows a small
+    /// downscaled copy, so this is the only way to actually look at it.
+    func openDraftImage() {
+        guard let data = draftImage else { return }
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Pager", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("\(linkId.uuidString).jpg")
+        try? data.write(to: url, options: .atomic)
+        NSWorkspace.shared.open(url)
+    }
+
     /// Pushes the draft.
     func commit() { session.commit() }
 

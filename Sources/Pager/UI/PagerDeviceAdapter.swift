@@ -50,7 +50,8 @@ struct PagerDeviceAdapter: View {
     }
 
     private var actions: PagerDeviceActions {
-        PagerDeviceActions(
+        let previewURL = previews.preview?.url
+        return PagerDeviceActions(
             onTextChange: { model.setText($0) },
             onSubmit: { model.submit() },
             onSend: { model.submit() },
@@ -58,6 +59,16 @@ struct PagerDeviceAdapter: View {
             onClear: { model.clear() },
             onMenu: { model.onOpenMenu?() },
             onOpenURL: { NSWorkspace.shared.open($0) },
+            // The image on screen is either the draft (open the file itself in
+            // Preview) or a preview fetched for a link in the message (open the
+            // page it came from) — same two destinations the popover had.
+            onOpenImage: {
+                if model.draftImage != nil {
+                    model.openDraftImage()
+                } else if let previewURL {
+                    NSWorkspace.shared.open(previewURL)
+                }
+            },
             onUpdateNow: {
                 // Let the window go before Sparkle's own window arrives.
                 model.onRequestClose?()
