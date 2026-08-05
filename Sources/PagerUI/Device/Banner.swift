@@ -23,8 +23,12 @@ public struct Banner: View {
     /// an `action` render as plain inverted text; segments with one render
     /// underlined and respond to taps — the LCD-status-line equivalent of a
     /// link.
-    public struct Segment: Identifiable {
-        public let id = UUID()
+    ///
+    /// Deliberately **not** `Identifiable` with a generated id: callers build
+    /// segments inside `body`, so a fresh id per render would tear down and
+    /// rebuild every button — cancelling any press in flight. The `ForEach`
+    /// below keys on position instead.
+    public struct Segment {
         public let text: String
         public let action: (() -> Void)?
         /// Identifies the tappable segment for UI testing. Ignored for
@@ -69,7 +73,7 @@ public struct Banner: View {
         case .plain(let text):
             styledText(text)
         case .action(let segments):
-            ForEach(segments) { segment in
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 if let action = segment.action {
                     Button(action: action) {
                         styledText(segment.text)

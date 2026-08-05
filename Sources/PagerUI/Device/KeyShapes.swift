@@ -375,6 +375,10 @@ public struct PagerKeyRow: View {
             RockerSilhouette()
                 .fill(Color.black.opacity(0.30))
                 .scaleEffect(1.08)
+                // Pure decoration (the recess the rocker sits in). Left
+                // hit-testable it would swallow drags on the case in the seams
+                // and the halo around the keys, like `RockerSeams` would.
+                .allowsHitTesting(false)
             RockerSilhouette()
                 .stroke(keyEdge.opacity(0.9), lineWidth: 1)
 

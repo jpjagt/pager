@@ -141,7 +141,8 @@ public struct PagerDeviceView: View {
         Binding(
             get: { state.text },
             set: { newValue in
-                let capped = newValue.count > 500 ? String(newValue.prefix(500)) : newValue
+                let max = EditorSession.maxLength // the invariant's home; never a literal here
+                let capped = newValue.count > max ? String(newValue.prefix(max)) : newValue
                 actions.onTextChange(capped)
             }
         )
