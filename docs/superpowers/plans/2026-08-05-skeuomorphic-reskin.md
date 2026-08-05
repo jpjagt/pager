@@ -21,6 +21,13 @@
 - `design-preview` must **never** ship — keep it out of `make bundle`.
 - All new user-facing copy is **lowercase**, matching existing UI strings ("type a message…", "quit pager").
 - Every new device view gets an `.accessibilityIdentifier()`.
+- **Delete replaced code — never comment it out, deprecate it, or leave a
+  compatibility shim.** The app is in private beta, so there are no external
+  consumers to keep working. When a task says a file or function is replaced, it
+  is *removed* in that same task. Dead code left behind is a plan failure.
+  (The one thing that is *not* legacy-removal: tolerant decoding of previously
+  saved `UserDefaults` links in Task 2. Beta users have real pagers stored on
+  disk; throwing on decode would wipe them.)
 
 ## Why `PagerUI` is a separate target (read before Task 3)
 
