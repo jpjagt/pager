@@ -3,3 +3,6 @@ dist/
 .DS_Store
 *.xcodeproj
 .swiftpm/
+
+# subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/
