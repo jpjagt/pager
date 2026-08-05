@@ -1,38 +1,28 @@
 import AppKit
 import PagerCore
 
-/// Owns one NSStatusItem + its popover for one link.
+/// Owns one NSStatusItem for one link. The pager itself lives in a
+/// `PagerWindow` the AppDelegate manages; this is purely the menu bar half —
+/// render the shared line, report clicks, accept drops.
 @MainActor
-final class StatusItemController: NSObject, NSPopoverDelegate {
+final class StatusItemController: NSObject {
     let linkId: UUID
     private let statusItem: NSStatusItem
-    private let popover = NSPopover()
-    /// A 1pt sliver pinned to the button's right edge (flexible left margin).
-    /// The popover anchors to this instead of the button: as the title widens
-    /// the button grows leftward, but this view stays put in screen space, so
-    /// the popover tracks the right edge and doesn't drift while typing.
-    private let anchorView = NSView()
-    var makePopoverContent: (() -> NSViewController)?
-    /// Fired when the popover actually closes (chevron, Enter, or click-away).
-    /// AppDelegate wires this to the current editor's commit().
-    var onClose: (() -> Void)?
+    /// Fired when the menu bar item is clicked. AppDelegate decides what that
+    /// means (open / raise / commit and close) from the window's state.
+    var onClick: (() -> Void)?
     private let dropView = StatusItemDropView()
     /// Fired when something is dropped on the menu bar item. AppDelegate wires
-    /// this to an immediate edit+commit (no popover involved).
+    /// this to an immediate edit+commit (no window involved).
     var onDropPayload: ((DropPayload) -> Void)?
 
     init(linkId: UUID) {
         self.linkId = linkId
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
-        popover.delegate = self
-        popover.behavior = .transient
-        popover.animates = false
         statusItem.button?.target = self
-        statusItem.button?.action = #selector(togglePopover)
+        statusItem.button?.action = #selector(buttonClicked)
         if let button = statusItem.button {
-            anchorView.autoresizingMask = [.minXMargin] // stick to the right edge
-            button.addSubview(anchorView)
             dropView.frame = button.bounds
             dropView.autoresizingMask = [.width, .height]
             dropView.onDrop = { [weak self] payload in self?.onDropPayload?(payload) }
@@ -143,23 +133,8 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                       width: size.width, height: size.height)
     }
 
-    @objc private func togglePopover() {
-        if popover.isShown {
-            popover.performClose(nil)
-        } else if let button = statusItem.button {
-            popover.contentViewController = makePopoverContent?()
-            // Park the anchor at the current right edge; autoresizing keeps it
-            // there as the button resizes during editing.
-            anchorView.frame = NSRect(x: button.bounds.maxX - 1, y: 0, width: 1, height: button.bounds.height)
-            popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
-        }
-    }
-
-    func closePopover() { popover.performClose(nil) }
-
-    func popoverDidClose(_ notification: Notification) {
-        onClose?()
+    @objc private func buttonClicked() {
+        onClick?()
     }
 
     func removeFromStatusBar() {

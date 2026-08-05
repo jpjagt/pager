@@ -10,6 +10,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var placeholderItem: NSStatusItem?
     private var controllers: [UUID: StatusItemController] = [:]
     private var engines: [UUID: SyncEngine] = [:]
+    /// One window + one view model per link, alive only while the window is
+    /// open. Both are torn down in the window's close callback.
+    private var windows: [UUID: PagerWindow] = [:]
+    private var models: [UUID: LinkViewModel] = [:]
     private var cancellables: Set<AnyCancellable> = []
     private let pathMonitor = NWPathMonitor()
     private var transport: SyncTransport?
@@ -49,6 +53,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if store.links.isEmpty {
             showOnboarding()
         }
+
+        if ProcessInfo.processInfo.environment["PAGER_DEBUG_WINDOW"] == "1" {
+            DispatchQueue.main.async { [weak self] in self?.openDebugWindow() }
+        }
+    }
+
+    /// Tier-2 verification hook from the reskin design doc: open the first
+    /// link's window straight away and print the **visible device** rect, so a
+    /// real-app render can be grabbed with `screencapture -R x,y,w,h`. The
+    /// printed rect is in screencapture's coordinate space (origin top-left of
+    /// the main display), not AppKit's bottom-left one.
+    private func openDebugWindow() {
+        guard let link = store.links.first, let window = openWindow(for: link.id) else { return }
+        // A run-loop timer, not a main-queue hop: unbundled (`swift run Pager`)
+        // Sparkle can't start and puts up a modal alert, and the main dispatch
+        // queue does not re-enter while a modal loop is on the stack — the
+        // frame would never be printed on exactly the runs this hook is for.
+        let timer = Timer(timeInterval: 0.4, repeats: false) { _ in
+            MainActor.assumeIsolated {
+                let rect = window.visibleDeviceFrame
+                let screenHeight = NSScreen.screens.first?.frame.height ?? rect.maxY
+                print("PAGER_FRAME \(Int(rect.minX)),\(Int(screenHeight - rect.maxY))," +
+                      "\(Int(rect.width)),\(Int(rect.height))")
+                fflush(stdout)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        RunLoop.main.add(timer, forMode: .modalPanel)
     }
 
     @objc private func didWake() {
@@ -71,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for (id, controller) in controllers where !current.contains(id) {
             controller.removeFromStatusBar()
             engines[id]?.stop()
+            closeWindow(for: id)
             controllers[id] = nil
             engines[id] = nil
         }
@@ -107,9 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = StatusItemController(linkId: link.id)
         controllers[link.id] = controller
         let linkId = link.id
-        controller.makePopoverContent = { [weak self] in
-            self?.popoverContent(for: linkId) ?? NSViewController()
-        }
+        controller.onClick = { [weak self] in self?.toggleWindow(for: linkId) }
         controller.onDropPayload = { [weak self] payload in
             self?.handleDrop(payload, linkId: linkId)
         }
@@ -141,25 +172,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func engine(for id: UUID) -> SyncEngine? { engines[id] }
 
-    func popoverContent(for linkId: UUID) -> NSViewController {
-        guard let link = store.links.first(where: { $0.id == linkId }) else {
-            return NSViewController()
+    // MARK: - Pager windows
+
+    /// Menu bar click. A focused window is the user saying "done" (commit and
+    /// close); a visible-but-unfocused one just needs raising — closing a
+    /// window the user can see but isn't focused on feels broken.
+    private func toggleWindow(for linkId: UUID) {
+        guard let window = windows[linkId], window.isVisible else {
+            openWindow(for: linkId)
+            return
         }
+        if window.isKeyWindow {
+            models[linkId]?.commit()
+            closeWindow(for: linkId)
+        } else {
+            NSApp.activateForWindow()
+            window.makeKeyAndOrderFront(nil)
+            window.orderFrontRegardless()
+        }
+    }
+
+    @discardableResult
+    private func openWindow(for linkId: UUID) -> PagerWindow? {
+        if let existing = windows[linkId] {
+            NSApp.activateForWindow()
+            existing.makeKeyAndOrderFront(nil)
+            return existing
+        }
+        guard let link = store.links.first(where: { $0.id == linkId }) else { return nil }
+
         let model = LinkViewModel(link: link, store: store, engine: engines[linkId])
-        model.onClose = { [weak self] in self?.controllers[linkId]?.closePopover() }
-        // Dismiss the popover, then present on the next runloop turn: this fires
-        // from an NSMenu inside a .transient popover, and ordering a window
-        // front while that dismissal is still in flight loses the front spot.
-        model.onOpenSettings = { [weak self] in
-            self?.controllers[linkId]?.closePopover()
-            DispatchQueue.main.async { self?.showSettings() }
+        model.onRequestClose = { [weak self] in self?.closeWindow(for: linkId) }
+        model.onOpenMenu = { [weak self] in self?.showPagerMenu() }
+
+        let updates = updateController
+        let window = PagerWindow(linkId: linkId) { focus in
+            PagerDeviceAdapter(model: model, updates: updates, focus: focus)
         }
-        // Commit the draft when the popover actually closes (any dismissal path).
-        controllers[linkId]?.onClose = { [weak model] in
-            model?.removePasteMonitor()
-            model?.commit()
+        window.onFrameChanged = { [weak self] rect in
+            self?.persistWindowFrame(rect, linkId: linkId)
         }
-        return NSHostingController(rootView: PopoverView(model: model, updates: updateController))
+        window.onClosed = { [weak self] in
+            self?.models[linkId]?.removePasteMonitor()
+            self?.models[linkId] = nil
+            self?.windows[linkId] = nil
+        }
+
+        windows[linkId] = window
+        models[linkId] = model
+        window.show(persistedVisibleFrame: link.windowFrame,
+                    avoiding: occupiedFrames(excluding: linkId))
+        model.installPasteMonitor()
+        return window
+    }
+
+    private func closeWindow(for linkId: UUID) {
+        windows[linkId]?.close() // onClosed does the teardown
+    }
+
+    /// The visible rects of the other open pagers, so a new one doesn't land on
+    /// top of them.
+    private func occupiedFrames(excluding linkId: UUID) -> [CGRect] {
+        windows.compactMap { id, window in
+            id == linkId || !window.isVisible ? nil : window.visibleDeviceFrame
+        }
+    }
+
+    /// Debounced by `PagerWindow`; this is the end of a drag.
+    private func persistWindowFrame(_ rect: CGRect, linkId: UUID) {
+        guard var link = store.links.first(where: { $0.id == linkId }),
+              link.windowFrame != rect else { return }
+        link.windowFrame = rect
+        store.update(link)
+    }
+
+    /// The `···` key: the menu the popover used to carry in its header.
+    private func showPagerMenu() {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "settings…", action: #selector(openSettingsFromMenu), keyEquivalent: "")
+            .target = self
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "quit pager", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func openSettingsFromMenu() {
+        showSettings()
     }
 
     private lazy var addPagerWindow = WindowHost<AddPagerView>(

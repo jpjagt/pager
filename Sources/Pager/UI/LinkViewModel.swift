@@ -4,29 +4,35 @@ import AppKit
 import PagerCore
 
 /// Thin SwiftUI bridge over `EditorSession`. Holds the private draft, mirrors
-/// the offline hint, and forwards edits/commit. Remote updates reach the menu
-/// bar through the store/engine path, not through this view model — a live
-/// draft is never overwritten.
+/// the offline hint and the link's appearance, and forwards edits/commit.
+/// Remote updates reach the menu bar through the store/engine path, not through
+/// this view model — a live draft is never overwritten.
 @MainActor
 final class LinkViewModel: ObservableObject {
     @Published var text: String
     @Published var showOfflineHint = false
     @Published var detectedURLs: [TextUtil.URLMatch]
     @Published var draftImage: Data?
-    @Published var imageError: String?
+    /// Mirrors the link's stored appearance so a theme change in Settings
+    /// re-themes an open window without reopening it.
+    @Published private(set) var appearance: AppearancePrefs
     let previewLoader = ImageURLPreviewLoader()
 
     let linkId: UUID
     private let session: EditorSession
     private let engine: SyncEngine?
     private var hintTask: Task<Void, Never>?
+    private var cancellables: Set<AnyCancellable> = []
 
-    var onOpenSettings: (() -> Void)?
-    var onClose: (() -> Void)?
+    /// The `···` key. The app shell pops the AppKit menu.
+    var onOpenMenu: (() -> Void)?
+    /// "this pager is done being edited" — the app shell closes its window.
+    var onRequestClose: (() -> Void)?
 
     init(link: PagerLink, store: LinkStore, engine: SyncEngine?) {
         self.linkId = link.id
         self.engine = engine
+        self.appearance = link.appearance
         // No engine (e.g. transport unavailable): commit is a no-op sink.
         let committer: ContentCommitter = engine ?? NoopCommitter()
         self.session = EditorSession(linkId: link.id, store: store, committer: committer)
@@ -35,30 +41,66 @@ final class LinkViewModel: ObservableObject {
         self.draftImage = session.draftImageData
         previewLoader.load(urls: session.detectedURLs.map(\.url))
 
+        let linkId = link.id
+        store.$links
+            .compactMap { $0.first(where: { $0.id == linkId })?.appearance }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] prefs in self?.appearance = prefs }
+            .store(in: &cancellables)
+
         engine?.onState = { [weak self] state in
             Task { @MainActor in self?.stateChanged(state) }
         }
         if let engine { stateChanged(engine.state) }
     }
 
-    /// Called from the view's onChange. Keeps `detectedURLs`/cap in sync with
+    /// The device view's `onTextChange`. Keeps `detectedURLs`/cap in sync with
     /// the session after it has processed the edit. The guard skips
     /// programmatic syncs (e.g. text set to "" after an image paste) — only a
     /// real user edit may replace an image draft.
-    func textEdited() {
-        guard text != session.text else { return }
-        session.edit(text)
-        if text != session.text { text = session.text } // reflect the char cap
+    func setText(_ newText: String) {
+        guard newText != session.text else {
+            text = newText
+            return
+        }
+        session.edit(newText)
+        text = session.text // reflects the char cap
         detectedURLs = session.detectedURLs
         draftImage = nil
-        imageError = nil
+        previewLoader.load(urls: detectedURLs.map(\.url))
+    }
+
+    /// Enter, or the send key: push the draft and let the window go.
+    func submit() {
+        commit()
+        onRequestClose?()
+    }
+
+    /// The ✕ key: abandon the edit, keeping whatever is already shared.
+    func dismiss() {
+        session.discard()
+        syncFromSession()
+        onRequestClose?()
+    }
+
+    /// The `C` key: empty the draft but stay open and still editing.
+    func clear() {
+        session.clear()
+        syncFromSession()
+    }
+
+    private func syncFromSession() {
+        text = session.text
+        draftImage = session.draftImageData
+        detectedURLs = session.detectedURLs
         previewLoader.load(urls: detectedURLs.map(\.url))
     }
 
     /// ⌘V with an image (or image file) on the pasteboard. The image becomes
-    /// the DRAFT — committed on popover close, exactly like typed text.
-    /// Returns whether the pasteboard held an image we took; false means the
-    /// caller should let the text field handle the paste natively.
+    /// the DRAFT — committed like typed text. Returns whether the pasteboard
+    /// held an image we took; false means the caller should let the text field
+    /// handle the paste natively.
     @discardableResult
     func pasteFromGeneralPasteboard() -> Bool {
         let pasteboard = NSPasteboard.general
@@ -79,20 +121,23 @@ final class LinkViewModel: ObservableObject {
             draftImage = session.draftImageData
             text = ""
             detectedURLs = []
-            imageError = nil
         } catch {
-            imageError = "couldn't read that image"
+            // Same signal the menu-bar drop path gives for an unreadable
+            // image; the device has no error row to put a message in.
+            NSSound.beep()
         }
         return true
     }
 
     private var pasteMonitor: Any?
 
-    /// Installed while the popover is open. ⌘V never reaches SwiftUI's
-    /// onPasteCommand: the Edit menu's key equivalent dispatches paste: to the
-    /// field editor (first responder), which beeps on an image-only pasteboard.
-    /// This monitor intercepts ⌘V first, takes the image if there is one, and
-    /// passes everything else through to the text field.
+    /// Installed while the pager's window is open. ⌘V never reaches SwiftUI's
+    /// `onPasteCommand`: the Edit menu's key equivalent dispatches `paste:` to
+    /// the field editor (first responder), which beeps on an image-only
+    /// pasteboard. This monitor intercepts ⌘V first, takes the image if there
+    /// is one, and passes everything else through to the text field. Verified
+    /// still necessary against a key `PagerWindow` (Task 9), not just the
+    /// popover it was written for.
     func installPasteMonitor() {
         guard pasteMonitor == nil else { return }
         pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -100,7 +145,7 @@ final class LinkViewModel: ObservableObject {
                   event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                   event.charactersIgnoringModifiers == "v",
                   event.window?.isKeyWindow == true,
-                  event.window?.contentViewController is NSHostingController<PopoverView>
+                  (event.window as? PagerWindow)?.linkId == self.linkId
             else { return event }
             return self.pasteFromGeneralPasteboard() ? nil : event
         }
@@ -115,26 +160,7 @@ final class LinkViewModel: ObservableObject {
         if let monitor = pasteMonitor { NSEvent.removeMonitor(monitor) }
     }
 
-    /// The ✕ on the image: back to an empty text draft.
-    func clearImage() {
-        session.clear()
-        draftImage = nil
-    }
-
-    /// Click on the draft image: hand the bytes to Preview (copy/save/share
-    /// come free there — no need to build those buttons).
-    func openDraftImage() {
-        guard let data = draftImage else { return }
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Pager", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent("\(linkId.uuidString).jpg")
-        try? data.write(to: url, options: .atomic)
-        NSWorkspace.shared.open(url)
-    }
-
-    /// Pushes the draft. Called from the popover-close event (AppDelegate wires
-    /// this to StatusItemController.popoverDidClose).
+    /// Pushes the draft.
     func commit() { session.commit() }
 
     /// Offline hint with a 2 s grace period so routine reconnects don't flash it.

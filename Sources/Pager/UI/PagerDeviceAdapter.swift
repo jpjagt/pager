@@ -1,0 +1,68 @@
+import AppKit
+import SwiftUI
+import PagerCore
+import PagerUI
+
+/// The only place the live models meet the device chrome: maps
+/// `LinkViewModel` + `UpdateController` + window focus onto
+/// `PagerDeviceState`/`PagerDeviceActions`.
+///
+/// `PagerDeviceView` deliberately knows about none of those types (it lives in
+/// `PagerUI` so `design-preview` can render it from literals), so this shim is
+/// what keeps that boundary intact — it holds no logic of its own beyond the
+/// mapping and the session-local "hide the update banner" flag.
+struct PagerDeviceAdapter: View {
+    @ObservedObject var model: LinkViewModel
+    @ObservedObject var updates: UpdateController
+    @ObservedObject var focus: PagerWindowFocus
+    @ObservedObject var previews: ImageURLPreviewLoader
+    /// "hide" on the update banner. Session-local for now; Task 12 persists it.
+    @State private var updateBannerHidden = false
+
+    init(model: LinkViewModel, updates: UpdateController, focus: PagerWindowFocus) {
+        self.model = model
+        self.updates = updates
+        self.focus = focus
+        self.previews = model.previewLoader
+    }
+
+    var body: some View {
+        PagerDeviceView(state: state, actions: actions)
+    }
+
+    private var state: PagerDeviceState {
+        PagerDeviceState(
+            screenColor: model.appearance.screenColor,
+            caseColor: model.appearance.caseColor,
+            text: model.text,
+            // The draft's own image, or — when the message is a link to one —
+            // the lazily fetched preview of it.
+            imageData: model.draftImage ?? previews.preview?.data,
+            isWindowFocused: focus.isFocused,
+            isOffline: model.showOfflineHint,
+            updateBannerVersion: updateBannerVersion,
+            links: model.detectedURLs.map(\.url))
+    }
+
+    private var updateBannerVersion: String? {
+        guard updates.updateAvailable, !updateBannerHidden else { return nil }
+        return updates.availableVersion
+    }
+
+    private var actions: PagerDeviceActions {
+        PagerDeviceActions(
+            onTextChange: { model.setText($0) },
+            onSubmit: { model.submit() },
+            onSend: { model.submit() },
+            onClose: { model.dismiss() },
+            onClear: { model.clear() },
+            onMenu: { model.onOpenMenu?() },
+            onOpenURL: { NSWorkspace.shared.open($0) },
+            onUpdateNow: {
+                // Let the window go before Sparkle's own window arrives.
+                model.onRequestClose?()
+                updates.installUpdate()
+            },
+            onHideUpdate: { updateBannerHidden = true })
+    }
+}
