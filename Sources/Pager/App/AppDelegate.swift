@@ -147,7 +147,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let model = LinkViewModel(link: link, store: store, engine: engines[linkId])
         model.onClose = { [weak self] in self?.controllers[linkId]?.closePopover() }
-        model.onOpenSettings = { [weak self] in self?.showSettings() }
+        // Dismiss the popover, then present on the next runloop turn: this fires
+        // from an NSMenu inside a .transient popover, and ordering a window
+        // front while that dismissal is still in flight loses the front spot.
+        model.onOpenSettings = { [weak self] in
+            self?.controllers[linkId]?.closePopover()
+            DispatchQueue.main.async { self?.showSettings() }
+        }
         // Commit the draft when the popover actually closes (any dismissal path).
         controllers[linkId]?.onClose = { [weak model] in
             model?.removePasteMonitor()
@@ -205,7 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showConfigAlert() {
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activateForWindow()
         let alert = NSAlert()
         alert.messageText = "Pager is not configured"
         alert.informativeText = "Set the Firebase database URL in PagerConfig.swift (see docs/firebase-setup.md)."

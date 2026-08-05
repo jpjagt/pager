@@ -25,14 +25,21 @@ final class WindowHost<Content: View> {
                 backing: .buffered, defer: false)
             window.title = title
             window.isReleasedWhenClosed = false
+            // Follow the user across Spaces. Without this the window stays on
+            // the Space it was first opened on, so re-showing it while the user
+            // is elsewhere (or in a full-screen app) appears to do nothing.
+            window.collectionBehavior = [.moveToActiveSpace]
             window.center()
             self.window = window
         }
         let hosting = NSHostingController(rootView: content)
         if autoSize { hosting.sizingOptions = [.preferredContentSize] }
         window?.contentViewController = hosting
+        // Activate first so the window is ordered into an already-frontmost app;
+        // orderFrontRegardless covers the case where activation was denied.
+        NSApp.activateForWindow()
         window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        window?.orderFrontRegardless()
     }
 
     func close() { window?.close() }

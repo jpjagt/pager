@@ -19,7 +19,10 @@ struct PopoverView: View {
             HStack(spacing: 4) {
                 Spacer()
                 if updates.updateAvailable {
-                    Button { updates.installUpdate() } label: {
+                    Button {
+                        model.onClose?() // let the popover go before Sparkle's window arrives
+                        updates.installUpdate()
+                    } label: {
                         Text("Update now").font(.caption).underline()
                     }
                     .buttonStyle(.plain)

@@ -33,13 +33,27 @@ final class UpdateController: NSObject, ObservableObject, SPUUpdaterDelegate,
     }
 
     /// Manual "Check for Updates…" — shows Sparkle's standard UI.
-    func checkForUpdates() { updaterController.updater.checkForUpdates() }
+    func checkForUpdates() { presentUpdateUI() }
 
     /// User tapped our "Update now" affordance. Re-presents the pending
     /// background-found update through Sparkle's standard flow (confirm →
     /// download → verify → install → relaunch). Same call as a manual check;
     /// Sparkle resurfaces the already-found update.
-    func installUpdate() { updaterController.updater.checkForUpdates() }
+    func installUpdate() { presentUpdateUI() }
+
+    /// Both entry points fire from a popover or menu that is still dismissing,
+    /// and presenting a window mid-dismissal is what drops it behind other
+    /// apps — so hop to the next runloop turn first. Activating before handing
+    /// off also matters: for a background app Sparkle deliberately orders the
+    /// update window to the back, and only force-activates when `!NSApp.isActive`
+    /// (`SPUStandardUserDriver.setUpActiveUpdateAlertForScheduledUpdate`).
+    /// Being active already puts us on its foreground path.
+    private func presentUpdateUI() {
+        DispatchQueue.main.async { [weak self] in
+            NSApp.activateForWindow()
+            self?.updaterController.updater.checkForUpdates()
+        }
+    }
 
     // MARK: SPUUpdaterDelegate
 
