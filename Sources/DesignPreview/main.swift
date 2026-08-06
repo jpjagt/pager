@@ -22,6 +22,11 @@ struct Options {
     var pressedKey: PagerKeyRow.Key?
     var sheet = false
     var stateName: String?
+    /// Supersampling factor for the PNG. The view still lays out at its
+    /// natural point size; only the bitmap is denser, so curves are re-drawn
+    /// at the higher resolution instead of being upscaled. Exists so key
+    /// silhouettes can be inspected for cusps, which are invisible at 1x.
+    var scale: CGFloat = 1
 }
 
 func parseArguments(_ arguments: [String]) -> Options {
@@ -55,6 +60,11 @@ func parseArguments(_ arguments: [String]) -> Options {
             case "send": options.pressedKey = .send
             default: fail("unknown key '\(value)' — expected one of: clear, menu, close, send")
             }
+        case "--scale":
+            guard let value = iterator.next(), let scale = Double(value), scale > 0, scale <= 8 else {
+                fail("--scale requires a number in (0, 8]")
+            }
+            options.scale = CGFloat(scale)
         case "--sheet":
             options.sheet = true
         case "--state":
@@ -137,7 +147,7 @@ func deviceState(forNamedState name: String, caseColor: CaseColor, screenColor: 
 ///
 /// Returns an `NSImage` (not yet PNG-encoded) so the contact sheet can
 /// composite many of these together before a single final encode.
-func renderNSImage(_ view: some View) -> NSImage {
+func renderNSImage(_ view: some View, scale: CGFloat = 1) -> NSImage {
     MainActor.assumeIsolated {
         let hosting = NSHostingView(rootView: view)
         let window = NSWindow(
@@ -153,9 +163,19 @@ func renderNSImage(_ view: some View) -> NSImage {
         window.setContentSize(fitting)
         hosting.layoutSubtreeIfNeeded()
 
-        guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+        // A hand-built rep whose pixel dimensions are `scale`× its point size
+        // makes `cacheDisplay` re-draw the view's vector content into the
+        // denser bitmap, rather than upscaling a 1x raster.
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int((hosting.bounds.width * scale).rounded()),
+            pixelsHigh: Int((hosting.bounds.height * scale).rounded()),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else {
             fail("failed to create bitmap rep for preview image")
         }
+        rep.size = hosting.bounds.size
         hosting.cacheDisplay(in: hosting.bounds, to: rep)
         let image = NSImage(size: hosting.bounds.size)
         image.addRepresentation(rep)
@@ -171,8 +191,8 @@ func pngData(_ image: NSImage) -> Data {
     return png
 }
 
-func renderPNG(_ view: some View) -> Data {
-    pngData(renderNSImage(view))
+func renderPNG(_ view: some View, scale: CGFloat = 1) -> Data {
+    pngData(renderNSImage(view, scale: scale))
 }
 
 func write(_ data: Data, to path: String) {
@@ -285,7 +305,7 @@ if options.sheet {
     write(renderContactSheet(), to: options.outPath)
 } else if let stateName = options.stateName {
     let state = deviceState(forNamedState: stateName, caseColor: options.caseColor, screenColor: options.screenColor)
-    write(renderPNG(PagerDeviceView(state: state)), to: options.outPath)
+    write(renderPNG(PagerDeviceView(state: state), scale: options.scale), to: options.outPath)
 } else if let pressedKey = options.pressedKey {
     // Keys-focused debug render (predates PagerDeviceView, still useful for
     // judging a single key's pressed look in isolation) — bypasses
@@ -298,8 +318,8 @@ if options.sheet {
         }
     }
     .frame(width: 360)
-    write(renderPNG(preview), to: options.outPath)
+    write(renderPNG(preview, scale: options.scale), to: options.outPath)
 } else {
     let state = PagerDeviceState(screenColor: options.screenColor, caseColor: options.caseColor, text: "dinner at 7?")
-    write(renderPNG(PagerDeviceView(state: state)), to: options.outPath)
+    write(renderPNG(PagerDeviceView(state: state), scale: options.scale), to: options.outPath)
 }

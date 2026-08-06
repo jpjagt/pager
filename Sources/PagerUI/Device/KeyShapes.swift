@@ -1,16 +1,65 @@
 import SwiftUI
 import PagerCore
 
+// MARK: - Smooth outlines
+
+/// A closed cubic-bezier outline through four extreme knots — top, right,
+/// bottom, left — whose tangent is **axis-aligned at every knot**:
+/// horizontal at top and bottom, vertical at left and right.
+///
+/// That constraint is the whole point. A cusp appears wherever a knot's
+/// incoming and outgoing tangents aren't collinear, which is exactly what
+/// the previous hand-placed control points produced where the rocker's end
+/// caps met its top and bottom edges. Here each knot's two handles are
+/// forced onto the same axis pointing opposite ways, so the outline is G1
+/// everywhere by construction — there is no way to tune the parameters into
+/// a sharp vertex.
+///
+/// `flat` and `round` are handle lengths as a fraction of each quadrant's
+/// x- and y-span. Long horizontal handles (`flat` ≫ 0.55) flatten the top
+/// and bottom into a moulded barrel with tightly-turned ends; the circular
+/// value is ≈0.55 for both.
+struct SmoothOutline {
+    var top: CGPoint
+    var right: CGPoint
+    var bottom: CGPoint
+    var left: CGPoint
+    var flat: CGFloat
+    var round: CGFloat
+
+    var path: Path {
+        var p = Path()
+        p.move(to: top)
+        p.addCurve(to: right,
+                   control1: CGPoint(x: top.x + (right.x - top.x) * flat, y: top.y),
+                   control2: CGPoint(x: right.x, y: right.y - (right.y - top.y) * round))
+        p.addCurve(to: bottom,
+                   control1: CGPoint(x: right.x, y: right.y + (bottom.y - right.y) * round),
+                   control2: CGPoint(x: bottom.x + (right.x - bottom.x) * flat, y: bottom.y))
+        p.addCurve(to: left,
+                   control1: CGPoint(x: bottom.x - (bottom.x - left.x) * flat, y: bottom.y),
+                   control2: CGPoint(x: left.x, y: left.y + (bottom.y - left.y) * round))
+        p.addCurve(to: top,
+                   control1: CGPoint(x: left.x, y: left.y - (left.y - top.y) * round),
+                   control2: CGPoint(x: top.x - (top.x - left.x) * flat, y: top.y))
+        p.closeSubpath()
+        return p
+    }
+}
+
 // MARK: - Shared rocker geometry
 
 /// Geometry shared by the three physical rocker keys (`C` · `···` · `✕`).
 /// The rocker reads as **one moulded silhouette** split by two diagonal
-/// seams, not three independently-rounded buttons: every band computes its
-/// edges from these same functions over the *same* full-width rect, so a
-/// seam's two endpoints are numerically identical for both of the bands it
-/// separates. A validation spike using three stock `Capsule`/`Ellipse`
-/// buttons side by side left a lens-shaped gap at every seam — that's the
-/// failure mode this file exists to avoid.
+/// seams, not three independently-rounded buttons.
+///
+/// Each band is the *same* silhouette curve intersected with a wedge between
+/// two seam lines, so (a) the three bands union back to exactly the
+/// silhouette — no lens-shaped gaps, which is what three stock
+/// `Capsule`/`Ellipse` buttons side by side produced — and (b) each band's
+/// outer edge is literally a piece of the smooth silhouette rather than a
+/// re-derived approximation of it, so no band can introduce a corner the
+/// whole part doesn't have.
 enum RockerGeometry {
     /// Fraction of width where the `C`|`···` seam sits.
     static let divider1: CGFloat = 0.40
@@ -25,38 +74,34 @@ enum RockerGeometry {
     /// than a vertical one.
     static let seamSlant: CGFloat = 0.24
 
-    /// Barrel bulge of the top/bottom edges, as a fraction of height. The
-    /// top bulge is the larger of the two, per the reference doc's "upper
-    /// bulge is larger than the lower one."
-    static let topBulge: CGFloat = 0.10
-    static let bottomBulge: CGFloat = 0.05
+    /// Handle lengths for the silhouette. `flat` is high so the top and
+    /// bottom run nearly straight across the middle before turning into the
+    /// end caps — a long moulded rocker, not a stadium and not an ellipse.
+    private static let flat: CGFloat = 1.00
+    private static let round: CGFloat = 0.34
 
-    /// How far the rounded end caps (the rocker's true left/right silhouette
-    /// edges) bow outward, as a fraction of height.
-    static let capBulge: CGFloat = 0.34
-
-    private static func bulge(_ f: CGFloat, amount: CGFloat, height: CGFloat) -> CGFloat {
-        amount * height * (1 - pow(2 * f - 1, 2))
+    /// The rocker's whole outer silhouette. Slightly asymmetric — the top
+    /// knot sits left of center and the two side knots sit either side of
+    /// the waist — so it reads as a moulded part lit from the top left
+    /// rather than a symmetric primitive.
+    static func silhouette(in rect: CGRect) -> Path {
+        SmoothOutline(
+            top: CGPoint(x: rect.minX + rect.width * 0.46, y: rect.minY),
+            right: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.46),
+            bottom: CGPoint(x: rect.minX + rect.width * 0.54, y: rect.maxY),
+            left: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.54),
+            flat: flat, round: round
+        ).path
     }
 
-    static func topPoint(_ f: CGFloat, in rect: CGRect) -> CGPoint {
-        CGPoint(x: rect.minX + f * rect.width,
-                y: rect.minY - bulge(f, amount: topBulge, height: rect.height))
+    /// A seam's two endpoints, extended well past the silhouette on both
+    /// ends — they only ever matter where they cross the part.
+    static func seamTop(_ f: CGFloat, in rect: CGRect) -> CGPoint {
+        CGPoint(x: rect.minX + f * rect.width - seamSlant * rect.height / 2, y: rect.minY)
     }
-
-    static func bottomPoint(_ f: CGFloat, in rect: CGRect) -> CGPoint {
-        CGPoint(x: rect.minX + f * rect.width,
-                y: rect.maxY + bulge(f, amount: bottomBulge, height: rect.height))
-    }
-
-    /// The shared seam at fraction `f` — both bands it separates read these
-    /// exact two points rather than computing their own edge, which is what
-    /// guarantees they line up.
-    static func seamTop(_ f: CGFloat, in rect: CGRect) -> CGPoint { topPoint(f, in: rect) }
 
     static func seamBottom(_ f: CGFloat, in rect: CGRect) -> CGPoint {
-        let base = bottomPoint(f, in: rect)
-        return CGPoint(x: base.x + seamSlant * rect.height, y: base.y)
+        CGPoint(x: rect.minX + f * rect.width + seamSlant * rect.height / 2, y: rect.maxY)
     }
 
     /// Center x-offset (from the full rocker's own center) of the band
@@ -67,57 +112,44 @@ enum RockerGeometry {
         (((f0 + f1) / 2) - 0.5) * width
     }
 
-    /// One band of the rocker silhouette: cubic-bezier top/bottom edges,
-    /// plus either a cubic end cap (the rocker's true outer sides) or a
-    /// straight-as-cubic seam (an internal divider shared with a
-    /// neighboring band — expressed as a cubic with collinear control
-    /// points so every edge in this shape, without exception, is a bezier
-    /// curve rather than a stock shape).
-    static func band(in rect: CGRect, from f0: CGFloat, to f1: CGFloat,
-                      outerLeft: Bool, outerRight: Bool) -> Path {
-        var p = Path()
-        let topLeft = topPoint(f0, in: rect)
-        let topRight = topPoint(f1, in: rect)
-        let bottomLeft = outerLeft ? bottomPoint(f0, in: rect) : seamBottom(f0, in: rect)
-        let bottomRight = outerRight ? bottomPoint(f1, in: rect) : seamBottom(f1, in: rect)
-
-        p.move(to: topLeft)
-        p.addCurve(to: topRight,
-                   control1: CGPoint(x: topLeft.x + (topRight.x - topLeft.x) * 0.33, y: topLeft.y),
-                   control2: CGPoint(x: topLeft.x + (topRight.x - topLeft.x) * 0.66, y: topRight.y))
-
-        if outerRight {
-            let cap = capBulge * rect.height
-            p.addCurve(to: bottomRight,
-                       control1: CGPoint(x: topRight.x + cap, y: topRight.y + (bottomRight.y - topRight.y) * 0.22),
-                       control2: CGPoint(x: bottomRight.x + cap, y: bottomRight.y - (bottomRight.y - topRight.y) * 0.22))
-        } else {
-            addStraightCubic(&p, from: topRight, to: bottomRight)
-        }
-
-        p.addCurve(to: bottomLeft,
-                   control1: CGPoint(x: bottomRight.x + (bottomLeft.x - bottomRight.x) * 0.33, y: bottomRight.y),
-                   control2: CGPoint(x: bottomRight.x + (bottomLeft.x - bottomRight.x) * 0.66, y: bottomLeft.y))
-
-        if outerLeft {
-            let cap = capBulge * rect.height
-            p.addCurve(to: topLeft,
-                       control1: CGPoint(x: bottomLeft.x - cap, y: bottomLeft.y - (bottomLeft.y - topLeft.y) * 0.22),
-                       control2: CGPoint(x: topLeft.x - cap, y: topLeft.y + (bottomLeft.y - topLeft.y) * 0.22))
-        } else {
-            addStraightCubic(&p, from: bottomLeft, to: topLeft)
-        }
-
-        p.closeSubpath()
-        return p
+    /// One band of the rocker: the silhouette clipped to the wedge between
+    /// the seams at `f0` and `f1`. `f0 == 0` / `f1 == 1` mean "no seam that
+    /// side" — the wedge simply runs off past the end cap.
+    ///
+    /// Clipped through `CGPath` rather than SwiftUI's `Path.intersection`,
+    /// which is macOS 14+; this app targets 13.
+    static func band(in rect: CGRect, from f0: CGFloat, to f1: CGFloat) -> Path {
+        let clipped = silhouette(in: rect).cgPath
+            .intersection(wedge(in: rect, from: f0, to: f1).cgPath)
+        return Path(clipped)
     }
 
-    /// A straight line expressed as a cubic bezier with collinear control
-    /// points (at 1/3 and 2/3 along the segment) rather than `addLine`.
-    private static func addStraightCubic(_ p: inout Path, from start: CGPoint, to end: CGPoint) {
-        let c1 = CGPoint(x: start.x + (end.x - start.x) / 3, y: start.y + (end.y - start.y) / 3)
-        let c2 = CGPoint(x: start.x + (end.x - start.x) * 2 / 3, y: start.y + (end.y - start.y) * 2 / 3)
-        p.addCurve(to: end, control1: c1, control2: c2)
+    /// The clipping wedge: a quadrilateral bounded by the two seam lines,
+    /// each extended past the silhouette along its own slant so the cut
+    /// keeps the seam's exact angle. `f == 0`/`f == 1` degenerate into a
+    /// vertical line far outside the part, i.e. no cut on that side.
+    private static func wedge(in rect: CGRect, from f0: CGFloat, to f1: CGFloat) -> Path {
+        let outside = rect.width + rect.height
+
+        /// The seam at `f`, extended one full height beyond each end.
+        func seam(_ f: CGFloat) -> (top: CGPoint, bottom: CGPoint) {
+            if f <= 0 { return (CGPoint(x: rect.minX - outside, y: rect.minY - outside),
+                                CGPoint(x: rect.minX - outside, y: rect.maxY + outside)) }
+            if f >= 1 { return (CGPoint(x: rect.maxX + outside, y: rect.minY - outside),
+                                CGPoint(x: rect.maxX + outside, y: rect.maxY + outside)) }
+            let t = seamTop(f, in: rect), b = seamBottom(f, in: rect)
+            let dx = b.x - t.x, dy = b.y - t.y
+            return (CGPoint(x: t.x - dx, y: t.y - dy), CGPoint(x: b.x + dx, y: b.y + dy))
+        }
+
+        let start = seam(f0), end = seam(f1)
+        var p = Path()
+        p.move(to: start.top)
+        p.addLine(to: end.top)
+        p.addLine(to: end.bottom)
+        p.addLine(to: start.bottom)
+        p.closeSubpath()
+        return p
     }
 }
 
@@ -135,28 +167,24 @@ public struct RockerKey: Shape {
     public func path(in rect: CGRect) -> Path {
         switch position {
         case .leading:
-            return RockerGeometry.band(in: rect, from: 0, to: RockerGeometry.divider1,
-                                        outerLeft: true, outerRight: false)
+            return RockerGeometry.band(in: rect, from: 0, to: RockerGeometry.divider1)
         case .middle:
-            return RockerGeometry.band(in: rect, from: RockerGeometry.divider1, to: RockerGeometry.divider2,
-                                        outerLeft: false, outerRight: false)
+            return RockerGeometry.band(in: rect, from: RockerGeometry.divider1, to: RockerGeometry.divider2)
         case .trailing:
-            return RockerGeometry.band(in: rect, from: RockerGeometry.divider2, to: 1,
-                                        outerLeft: false, outerRight: true)
+            return RockerGeometry.band(in: rect, from: RockerGeometry.divider2, to: 1)
         }
     }
 }
 
-/// The whole rocker's outer silhouette (all three bands, unioned) — used
-/// only to draw one shared recessed trough and rim behind the three key
-/// buttons. Not itself a key: drawing a *separate* recess per key would
+/// The whole rocker's outer silhouette — the curve every band is cut from,
+/// drawn directly to give the three keys one shared recessed trough and rim. Not itself a key: drawing a *separate* recess per key would
 /// scale each one from the rocker's overall center (since every `RockerKey`
 /// band is evaluated over the full shared rect) and distort the off-center
 /// bands, which is exactly the "three separate parts" look this task is
 /// trying to avoid.
 struct RockerSilhouette: Shape {
     func path(in rect: CGRect) -> Path {
-        RockerGeometry.band(in: rect, from: 0, to: 1, outerLeft: true, outerRight: true)
+        RockerGeometry.silhouette(in: rect)
     }
 }
 
@@ -176,26 +204,62 @@ struct RockerSeams: Shape {
     }
 }
 
-/// The send key: a separate green oval set apart to the right of the
-/// rocker, built per the reference doc's "oval with three corners" —
-/// three corner points with independently-tuned fillet radii (two sharp, one
-/// soft), rather than an `Ellipse`, which is precisely what a validation
-/// spike found reads as generic.
+/// The send key: a separate green key set apart to the right of the rocker,
+/// and the largest key on the device.
+///
+/// A tangent-arc construction (the previous "oval with three corners")
+/// pinched into visible points wherever two arcs of very different radii
+/// met. This is the same G1 four-knot outline as the rocker with fuller
+/// handles — a squared-off, slightly lopsided moulded blob. Handles past the
+/// circular ≈0.55, plus knots offset off both axes, are what keep it from
+/// reading as an `Ellipse`.
 public struct SendKey: Shape {
     public init() {}
 
     public func path(in rect: CGRect) -> Path {
-        let b = rect
-        let top = CGPoint(x: b.minX + b.width * 0.52, y: b.minY)
-        let left = CGPoint(x: b.minX, y: b.minY + b.height * 0.58)
-        let bottom = CGPoint(x: b.minX + b.width * 0.44, y: b.maxY)
-        let right = CGPoint(x: b.maxX, y: b.minY + b.height * 0.40)
+        SmoothOutline(
+            top: CGPoint(x: rect.minX + rect.width * 0.42, y: rect.minY),
+            right: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.40),
+            bottom: CGPoint(x: rect.minX + rect.width * 0.58, y: rect.maxY),
+            left: CGPoint(x: rect.minX, y: rect.minY + rect.height * 0.60),
+            flat: 0.60, round: 0.58
+        ).path
+    }
+}
+
+/// The send key's right-pointing arrow, in place of a text label — the
+/// Memo Classic's own send glyph. A triangle whose corners are eased by
+/// short cubic fillets: a raw triangle's three points look printed, and the
+/// key's whole story is moulded plastic.
+struct ArrowGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        let tip = CGPoint(x: rect.maxX, y: rect.midY)
+        let topLeft = CGPoint(x: rect.minX, y: rect.minY)
+        let bottomLeft = CGPoint(x: rect.minX, y: rect.maxY)
+        let corners = [tip, bottomLeft, topLeft]
+        let ease = min(rect.width, rect.height) * 0.22
+
+        /// Walks the triangle corner to corner, stopping `ease` short of
+        /// each one and rounding through it with a cubic whose handles sit
+        /// on the two incident edges.
+        func lerp(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
+            CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+        }
+        func towards(_ from: CGPoint, _ to: CGPoint) -> CGPoint {
+            let d = max(hypot(to.x - from.x, to.y - from.y), 0.0001)
+            return lerp(from, to, min(ease / d, 0.5))
+        }
 
         var p = Path()
-        p.move(to: top)
-        p.addArc(tangent1End: left, tangent2End: bottom, radius: b.height * 0.42)    // soft
-        p.addArc(tangent1End: bottom, tangent2End: right, radius: b.height * 0.20)   // sharp
-        p.addArc(tangent1End: right, tangent2End: top, radius: b.height * 0.22)      // sharp
+        for i in corners.indices {
+            let corner = corners[i]
+            let previous = corners[(i + corners.count - 1) % corners.count]
+            let next = corners[(i + 1) % corners.count]
+            let entry = towards(corner, previous)
+            let exit = towards(corner, next)
+            if i == 0 { p.move(to: entry) } else { p.addLine(to: entry) }
+            p.addCurve(to: exit, control1: corner, control2: corner)
+        }
         p.closeSubpath()
         return p
     }
@@ -219,6 +283,25 @@ struct KeyGlyph: View {
 
     private var glyph: Text {
         Text(text).font(.system(size: size, weight: .bold, design: .rounded))
+    }
+}
+
+/// The send key's arrow, debossed the same way `KeyGlyph` debosses text: a
+/// dark copy half a point down, a light copy on top.
+struct KeyArrow: View {
+    var width: CGFloat = 15
+    var height: CGFloat = 16
+
+    var body: some View {
+        ZStack {
+            arrow(.black.opacity(0.5)).offset(y: 0.7)
+            arrow(.white.opacity(0.92))
+        }
+        .frame(width: width, height: height)
+    }
+
+    private func arrow(_ color: Color) -> some View {
+        ArrowGlyph().fill(color)
     }
 }
 
@@ -341,8 +424,13 @@ public struct PagerKeyButtonStyle<S: Shape>: ButtonStyle {
 public struct PagerKeyRow: View {
     public enum Key: Equatable { case clear, menu, close, send }
 
-    private static let rockerWidth: CGFloat = 118
-    private static let rockerHeight: CGFloat = 36
+    // The rocker is the smaller unit of the two: three keys sharing one
+    // moulded part, next to a single send key that is deliberately the
+    // biggest thing in the row.
+    private static let rockerWidth: CGFloat = 104
+    private static let rockerHeight: CGFloat = 30
+    private static let sendWidth: CGFloat = 48
+    private static let sendHeight: CGFloat = 40
 
     private let palette: CasePalette
     private let pressed: Key?
@@ -395,8 +483,12 @@ public struct PagerKeyRow: View {
                     .offset(x: RockerGeometry.bandCenterOffsetX(from: RockerGeometry.divider2, to: 1, width: Self.rockerWidth))
             }
 
+            // Clipped to the silhouette: the seam lines run edge-to-edge of
+            // the layout rect, and only the part crossing the moulding is a
+            // groove.
             RockerSeams()
                 .stroke(keyEdge.opacity(0.85), lineWidth: 1)
+                .clipShape(RockerSilhouette())
                 .allowsHitTesting(false)
         }
         .frame(width: Self.rockerWidth, height: Self.rockerHeight)
@@ -405,11 +497,9 @@ public struct PagerKeyRow: View {
 
     private var sendKey: some View {
         keyButton(.send, shape: SendKey(), top: sendTop, bottom: sendBottom, action: onSend) {
-            Text("send")
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundColor(.white.opacity(0.92))
+            KeyArrow()
         }
-        .frame(width: 54, height: 34)
+        .frame(width: Self.sendWidth, height: Self.sendHeight)
         .accessibilityIdentifier("send-key")
     }
 
