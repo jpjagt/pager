@@ -81,7 +81,12 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
         level = .floating
         isMovableByWindowBackground = true
         isReleasedWhenClosed = false
-        animationBehavior = .utilityWindow
+        // Explicitly opt out of AppKit's automatic show/hide animation — left
+        // at `.default`, AppKit fades borderless utility-style windows in and
+        // out. Appear/disappear must be instantaneous; the *shadow* still
+        // animates on focus change, but that is drawn in SwiftUI (see
+        // `PagerWindowChrome` below) and is unrelated to this setting.
+        animationBehavior = .none
         // Follow the user across Spaces, and stay visible over a full-screen
         // app — an always-on-top note that vanishes on the next Space isn't.
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
