@@ -27,6 +27,9 @@ public struct PagerDeviceView: View {
     /// never clipped or overflowing.
     private static let lcdContentWidth: CGFloat = 320
     private static let deviceWidth: CGFloat = 360
+    /// Shared by the message field and its hand-drawn placeholder, which have
+    /// to lay out identically or the prompt sits off the typing line.
+    private static let messageFont = Font.system(size: 14, weight: .medium, design: .monospaced)
 
     private let state: PagerDeviceState
     private let actions: PagerDeviceActions
@@ -53,6 +56,15 @@ public struct PagerDeviceView: View {
         // cue a real inactive window gives, just applied to the LCD glow
         // rather than a whole-window dim.
         .opacity(state.isWindowFocused ? 1 : 0.88)
+        // The device is a physical object with a lit, light-colored screen: it
+        // looks the same on a dark-mode Mac as on a light-mode one. Every color
+        // in here comes from a palette, so nothing *should* read the
+        // environment — this pins the subtree to light anyway, so the day
+        // something appearance-aware sneaks in (a system control, a `.primary`
+        // default) it still resolves against the panel it is drawn on. The host
+        // does the same on the AppKit side (`PagerWindow`), since AppKit-backed
+        // controls like `TextField` don't take their colors from here.
+        .environment(\.colorScheme, .light)
         .accessibilityIdentifier("pager-device")
     }
 
@@ -123,10 +135,14 @@ public struct PagerDeviceView: View {
     /// (leaving Option+Return free to insert an actual newline) — a documented
     /// workaround for exactly this multiline-TextField-onSubmit gap.
     private var textField: some View {
-        TextField("type a message…", text: textBinding, axis: .vertical)
+        TextField("", text: textBinding, axis: .vertical)
             .textFieldStyle(.plain)
-            .font(.system(size: 14, weight: .medium, design: .monospaced))
+            .font(Self.messageFont)
+            // Both explicit, both from the palette: the LCD is a lit panel, so
+            // its ink can never come from an appearance-derived default.
+            .foregroundColor(ink)
             .tint(ink) // caret color — a blue system caret on a green LCD breaks the illusion
+            .overlay(alignment: .topLeading) { placeholder }
             .background(
                 Button(action: actions.onSubmit) { EmptyView() }
                     .keyboardShortcut(.defaultAction)
@@ -135,6 +151,23 @@ public struct PagerDeviceView: View {
                     .accessibilityHidden(true)
             )
             .accessibilityIdentifier("pager-text-field")
+    }
+
+    /// The empty-field prompt, drawn by hand rather than passed to `TextField`.
+    /// A `TextField`'s own placeholder is painted in the system placeholder
+    /// color, which is appearance-derived — near-white on a dark-mode Mac,
+    /// which washes out completely on the lit panel (the one thing in the
+    /// device that measurably changed between light and dark before this).
+    /// Faded `ink` instead: a dimmed version of what typing will produce.
+    @ViewBuilder
+    private var placeholder: some View {
+        if state.text.isEmpty {
+            Text("type a message…")
+                .font(Self.messageFont)
+                .foregroundColor(ink.opacity(0.45))
+                .allowsHitTesting(false) // clicks belong to the field behind it
+                .accessibilityHidden(true)
+        }
     }
 
     private var textBinding: Binding<String> {

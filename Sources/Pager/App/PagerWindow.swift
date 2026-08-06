@@ -69,6 +69,14 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
 
         isOpaque = false
         backgroundColor = .clear
+        // The device never adapts to Light/Dark: its screen is a lit, light
+        // panel in every theme and its ink is the palette's dark `ink`, full
+        // stop. The SwiftUI subtree pins `colorScheme` itself
+        // (`PagerDeviceView`), but the message field is a real `NSTextField`
+        // underneath and takes its system-drawn bits — selection wash, the
+        // insertion point, any control it grows — from the *window's*
+        // appearance, so that is pinned here too.
+        appearance = NSAppearance(named: .aqua)
         hasShadow = false // drawn in SwiftUI — see the type doc
         level = .floating
         isMovableByWindowBackground = true
