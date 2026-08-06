@@ -14,8 +14,7 @@ public struct ScreenPalette {
     /// Menu bar text + image thumbnail border, rendered on a LIGHT menu bar.
     public let menuBarInkOnLight: String
     /// Same role, rendered on a DARK menu bar. A single `menuBarInk` value
-    /// would vanish on one appearance or the other, since the menu bar
-    /// background differs by system appearance.
+    /// would vanish on one background or the other.
     public let menuBarInkOnDark: String
 
     public init(backlight: String, ink: String, glow: String,
@@ -25,6 +24,17 @@ public struct ScreenPalette {
         self.glow = glow
         self.menuBarInkOnLight = menuBarInkOnLight
         self.menuBarInkOnDark = menuBarInkOnDark
+    }
+
+    /// Picks the menu bar ink for the background the item is actually sitting
+    /// on. The input is the *menu bar's* darkness, not the system's Light/Dark
+    /// setting: macOS tints the translucent menu bar from the wallpaper, so a
+    /// Light-Mode Mac with a dark picture behind the menu bar gets a dark menu
+    /// bar — and the on-light variant would be unreadable there. The caller
+    /// (`StatusItemController`) reads that darkness off the status item
+    /// button's own effective appearance.
+    public func menuBarInk(onDarkMenuBar isDark: Bool) -> String {
+        isDark ? menuBarInkOnDark : menuBarInkOnLight
     }
 }
 

@@ -20,6 +20,44 @@ final class ThemeTests: XCTestCase {
         }
     }
 
+    /// The menu bar ink is keyed on the *menu bar's* darkness, not the system
+    /// Light/Dark setting — macOS tints the translucent menu bar from the
+    /// wallpaper, so the two genuinely disagree (a dark picture in Light Mode
+    /// gives a dark menu bar). This is the whole reason the role is a function
+    /// of a boolean rather than something the view reads off `NSApp`.
+    func testMenuBarInkPicksTheVariantForTheMenuBarBackground() {
+        for color in ScreenColor.allCases {
+            let palette = color.palette
+            XCTAssertEqual(palette.menuBarInk(onDarkMenuBar: true), palette.menuBarInkOnDark,
+                           "\(color): a dark menu bar must take the on-dark variant")
+            XCTAssertEqual(palette.menuBarInk(onDarkMenuBar: false), palette.menuBarInkOnLight,
+                           "\(color): a light menu bar must take the on-light variant")
+        }
+    }
+
+    /// The two variants must actually differ, or the role collapses and one of
+    /// the two menu bar backgrounds gets unreadable ink.
+    func testMenuBarInkVariantsDifferForEveryScreenColor() {
+        for color in ScreenColor.allCases {
+            let palette = color.palette
+            XCTAssertNotEqual(palette.menuBarInk(onDarkMenuBar: true),
+                              palette.menuBarInk(onDarkMenuBar: false),
+                              "\(color): on-dark and on-light ink are the same value")
+        }
+    }
+
+    /// The LCD's own `ink` is a separate role from either menu bar variant: the
+    /// screen is a lit, light panel in every theme, so its ink never adapts.
+    /// Guards against someone "simplifying" the palette by reusing a menu bar
+    /// value for the panel.
+    func testScreenInkIsIndependentOfTheMenuBarInkVariants() {
+        for color in ScreenColor.allCases {
+            let palette = color.palette
+            XCTAssertNotEqual(palette.ink, palette.menuBarInkOnDark,
+                              "\(color): panel ink must not be the on-dark menu bar ink")
+        }
+    }
+
     func testEveryCaseColorHasACompleteValidPalette() {
         for color in CaseColor.allCases {
             let palette = color.palette

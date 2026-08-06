@@ -15,7 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windows: [UUID: PagerWindow] = [:]
     private var models: [UUID: LinkViewModel] = [:]
     private var cancellables: Set<AnyCancellable> = []
-    private var appearanceObserver: NSKeyValueObservation?
     private let pathMonitor = NWPathMonitor()
     private var transport: SyncTransport?
     private let syncLog = FileSyncLog(url: AppDelegate.logURL)
@@ -50,14 +49,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(didWake),
             name: NSWorkspace.didWakeNotification, object: nil)
-
-        // The menu bar ink is a resolved color picked for the current
-        // appearance (see `StatusItemController.ink`), so light/dark has to
-        // re-render it — nothing else would.
-        appearanceObserver = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
-            guard let self else { return }
-            Task { @MainActor in self.renderAll() }
-        }
 
         if store.links.isEmpty {
             showOnboarding()
@@ -141,10 +132,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                          prefs: link.appearance)
         }
     }
-
-    /// Repaints every menu bar item. Needed on a system appearance flip: the
-    /// ink is a color resolved for one appearance, so nothing else would.
-    private func renderAll() { render(links: store.links) }
 
     /// A single 📟 status item shown while no pagers are configured, so the
     /// app stays reachable from the menu bar.
