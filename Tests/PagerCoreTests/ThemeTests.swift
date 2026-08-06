@@ -65,14 +65,37 @@ final class ThemeTests: XCTestCase {
             assertValidHex(palette.shellBottom, "\(color).shellBottom")
             assertValidHex(palette.edgeHighlight, "\(color).edgeHighlight")
             assertValidHex(palette.edgeShadow, "\(color).edgeShadow")
-            assertValidHex(palette.bezel, "\(color).bezel")
+            assertValidHex(palette.faceplateTop, "\(color).faceplateTop")
+            assertValidHex(palette.faceplateBottom, "\(color).faceplateBottom")
+            assertValidHex(palette.faceplateEdge, "\(color).faceplateEdge")
             assertValidHex(palette.keyTop, "\(color).keyTop")
             assertValidHex(palette.keyBottom, "\(color).keyBottom")
             assertValidHex(palette.keyEdge, "\(color).keyEdge")
+            assertValidHex(palette.keyGlyph, "\(color).keyGlyph")
             assertValidHex(palette.sendTop, "\(color).sendTop")
             assertValidHex(palette.sendBottom, "\(color).sendBottom")
-            assertValidHex(palette.brandInk, "\(color).brandInk")
-            assertValidHex(palette.brandHighlight, "\(color).brandHighlight")
+            assertValidHex(palette.sendGlyph, "\(color).sendGlyph")
+            assertValidHex(palette.closeTop, "\(color).closeTop")
+            assertValidHex(palette.closeBottom, "\(color).closeBottom")
+            assertValidHex(palette.closeGlyph, "\(color).closeGlyph")
+            assertValidHex(palette.wordmark, "\(color).wordmark")
+        }
+    }
+
+    /// Every colored part of the device has to be reachable from the theme —
+    /// the send key's green and the close key's red are physical part colors,
+    /// but hard-coding them in the views is what this guards against.
+    func testNoDeviceColorRoleIsMissingFromTheCasePalette() {
+        for color in CaseColor.allCases {
+            let palette = color.palette
+            XCTAssertNotEqual(palette.closeTop, palette.keyTop,
+                              "\(color): the close key must be its own part color, not the rocker's")
+            XCTAssertNotEqual(palette.sendTop, palette.keyTop,
+                              "\(color): the send key must be its own part color, not the rocker's")
+            XCTAssertNotEqual(palette.wordmark, palette.shellTop,
+                              "\(color): the wordmark prints on the faceplate, not in case plastic")
+            XCTAssertNotEqual(palette.keyGlyph, palette.keyTop,
+                              "\(color): rocker glyphs must contrast with the key face they sit on")
         }
     }
 

@@ -19,9 +19,11 @@ public struct LCDPanel<Content: View>: View {
     private let palette: ScreenPalette
     private let content: Content
 
-    /// Matches `PagerShell`'s rim treatment in weight; a recessed well reads
-    /// convincingly with a slightly tighter radius than the outer shell.
-    private let cornerRadius: CGFloat = 10
+    /// The traced screen's corner radius, scaled from design space to the
+    /// rendered device — so the well stays registered with the art rather than
+    /// drifting from it on the next retrace.
+    private let cornerRadius: CGFloat =
+        PagerOutlines.lcdCornerRadius * (360 / PagerOutlines.designSize.width)
 
     public init(palette: ScreenPalette, @ViewBuilder content: () -> Content) {
         self.palette = palette
@@ -37,7 +39,7 @@ public struct LCDPanel<Content: View>: View {
             fill
             content
                 .foregroundColor(ink)
-                .padding(10)
+                .padding(PagerOutlines.lcdContentPadding)
         }
         .background(
             // The glow lives BEHIND the well and is intentionally larger than

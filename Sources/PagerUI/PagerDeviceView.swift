@@ -20,13 +20,18 @@ import PagerCore
 /// all grow the device — which is what `PagerWindow` measures via this
 /// view's fitting size.
 public struct PagerDeviceView: View {
-    /// The LCD's usable content width: 360 (device) − 2× `PagerShell`'s side
-    /// inset (~22, set by where the case's end caps sit at the top of the
-    /// screen) − 2× `LCDPanel`'s own internal padding (10). Only used to size
-    /// the image row; a few points of slack here just leaves the image
-    /// narrower than the panel, never clipped or overflowing.
-    private static let lcdContentWidth: CGFloat = 294
     private static let deviceWidth: CGFloat = 360
+
+    /// The LCD's usable content width, derived from the traced screen rect
+    /// rather than hard-coded: the design-space LCD width scaled to the device,
+    /// less `LCDPanel`'s own internal padding on both sides.
+    ///
+    /// This has to track the trace. When it didn't, an over-wide image row
+    /// pushed the whole device stack past its 360 frame, and the *top-left
+    /// chrome* — close key and wordmark — slid off the case edge, which is a
+    /// long way from where the wrong number was.
+    private static let lcdContentWidth: CGFloat =
+        PagerOutlines.lcd.width * (deviceWidth / PagerOutlines.designSize.width) - 2 * PagerOutlines.lcdContentPadding
     /// Shared by the message field and its hand-drawn placeholder, which have
     /// to lay out identically or the prompt sits off the typing line.
     private static let messageFont = Font.system(size: 14, weight: .medium, design: .monospaced)
@@ -109,7 +114,7 @@ public struct PagerDeviceView: View {
                         Banner(
                             palette: screenPalette,
                             style: .action([
-                                Banner.Segment("update \(version) available —"),
+                                Banner.Segment("update \(version) —"),
                                 Banner.Segment("update now", accessibilityIdentifier: "update-banner-update-now") {
                                     actions.onUpdateNow()
                                 },

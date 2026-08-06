@@ -1,25 +1,23 @@
 import SwiftUI
 import PagerCore
 
-/// The molded-plastic case body: a rounded shell filled with a top-lit
-/// gradient, a hard bevel pair framing the edge, and a subtle noise grain so
-/// it reads as physical material rather than a flat rounded rectangle.
+/// The device body: the moulded plastic case, the glossy faceplate set into
+/// it, the keys, the printed wordmark — everything except the screen, which
+/// arrives as `content`.
 ///
-/// `PagerShell` draws the case, its bottom key row, and the debossed
-/// wordmark — no screen — around whatever `content` (the `LCDPanel`) it's
-/// given.
+/// Layout is **design-space driven**. Every element is positioned from the
+/// traced art in `PagerOutlines` rather than from stacks and paddings, which
+/// is what keeps the chrome registered against the silhouette: retracing the
+/// SVG moves the parts with it. The one exception is the screen, which fills
+/// whatever is left between its traced top and bottom insets — so the screen's
+/// content is what drives the device's height.
+///
+/// Nothing here needs a `GeometryReader`. The device width is fixed, so the
+/// design-to-point scale is a constant, and the two things that move with
+/// height (screen, keys) are anchored to edges rather than to a measured size.
 public struct PagerShell<Content: View>: View {
-    /// Depth of the plastic above the screen and below the key row. Also the
-    /// depth the side insets are measured at — the outline is at its most
-    /// intrusive at the very top and bottom of the content, so clearing the
-    /// curve there clears it everywhere.
-    private static var edgeInset: CGFloat { 14 }
-    /// Visible plastic between the contents and the case edge, on top of
-    /// whatever the cap curve itself takes away at `edgeInset`.
-    private static var sideMargin: CGFloat { 3 }
-
     private let palette: CasePalette
-    private let outline: CaseOutline
+    private let width: CGFloat
     private let content: Content
     private let pressedKey: PagerKeyRow.Key?
     private let onClear: () -> Void
@@ -27,12 +25,12 @@ public struct PagerShell<Content: View>: View {
     private let onClose: () -> Void
     private let onSend: () -> Void
 
-    public init(palette: CasePalette, outline: CaseOutline = CaseOutline(), pressedKey: PagerKeyRow.Key? = nil,
+    public init(palette: CasePalette, width: CGFloat = 360, pressedKey: PagerKeyRow.Key? = nil,
                 onClear: @escaping () -> Void = {}, onMenu: @escaping () -> Void = {},
                 onClose: @escaping () -> Void = {}, onSend: @escaping () -> Void = {},
                 @ViewBuilder content: () -> Content) {
         self.palette = palette
-        self.outline = outline
+        self.width = width
         self.pressedKey = pressedKey
         self.onClear = onClear
         self.onMenu = onMenu
@@ -41,116 +39,150 @@ public struct PagerShell<Content: View>: View {
         self.content = content()
     }
 
-    private var shape: CaseOutline { outline }
-
-    /// How far in from the left and right edges the screen and keys have to
-    /// sit to clear the end caps, measured off the outline itself rather
-    /// than hard-coded — retuning the cap moves the contents with it.
-    private var sideInset: CGFloat {
-        outline.inset(atDepth: Self.edgeInset) + Self.sideMargin
-    }
+    /// Design units → points.
+    private var scale: CGFloat { width / PagerOutlines.designSize.width }
+    private func s(_ designUnits: CGFloat) -> CGFloat { designUnits * scale }
 
     public var body: some View {
         ZStack {
-            caseBody(shape)
+            caseBody
             noiseOverlay
-            bevel
-            VStack(spacing: 0) {
-                content
-                    .padding(.horizontal, sideInset)
-                    .padding(.top, Self.edgeInset)
-                Spacer(minLength: 8)
-                keyRow
-                    .padding(.horizontal, sideInset)
-                    .padding(.bottom, Self.edgeInset)
-            }
+            caseBevel
+            faceplate
+
+            screen
+            topCapChrome
+            keys
         }
-        // The LCD's outer glow is a backlight bleeding onto the surrounding
-        // *plastic* — clipped to the case so it stops at the edge instead of
-        // hanging in the air outside the device. This is also what lets the
-        // window drop AppKit's shadow off a clean silhouette: the window is
-        // exactly the device now, with no soft halo for the shadow to pick up.
-        .clipShape(shape)
+        .frame(width: width)
+        // The floor. Below its natural height the outline would stop shrinking
+        // while the contents kept going, so the device is not allowed to get
+        // there — a real pager doesn't get shorter for a short message either.
+        .frame(minHeight: s(PagerOutlines.designSize.height))
+        // Clipped to the case so the screen's backlight glow stops at the
+        // plastic instead of hanging in the air, and so the window drops
+        // AppKit's shadow off a clean silhouette.
+        .clipShape(PagerOutlines.outerCase)
         .accessibilityIdentifier("pager-shell")
     }
 
-    /// The bottom row: the debossed wordmark at the left, the physical keys
-    /// at the right. Laid out together (per the brief) since both read off
-    /// the same `palette` and sit in the same trough at the bottom of the
-    /// case.
-    private var keyRow: some View {
-        HStack(alignment: .center, spacing: 12) {
-            Wordmark(palette: palette)
-            Spacer(minLength: 12)
-            PagerKeyRow(palette: palette, pressed: pressedKey,
-                        onClear: onClear, onMenu: onMenu, onClose: onClose, onSend: onSend)
-        }
+    // MARK: - Case
+
+    private var caseBody: some View {
+        PagerOutlines.outerCase.fill(
+            LinearGradient(colors: [color(palette.shellTop), color(palette.shellBottom)],
+                           startPoint: .top, endPoint: .bottom))
     }
 
-    /// The case fill: a plain top-to-bottom gradient. A validation spike
-    /// (round 1 of this task's visual gate) showed the native
-    /// `.shadow(.inner(...))` assist bled well past the edge into a
-    /// full-width wash — with `shellBottom` already a dark grey, the two
-    /// stacked into a heavy vignette that read as two horizontal stripes
-    /// rather than an edge. Dropped entirely; the whole bevel illusion now
-    /// comes from the single stroked ring in `bevel`.
-    private func caseBody(_ shape: CaseOutline) -> some View {
-        shape
-            .fill(
-                LinearGradient(
-                    colors: [color(palette.shellTop), color(palette.shellBottom)],
-                    startPoint: .top, endPoint: .bottom
-                )
-            )
+    /// A single thin stroke run around the whole perimeter, colored by an
+    /// `AngularGradient`: `edgeHighlight` peaks near the top-left, `edgeShadow`
+    /// at the bottom-right, and the two blend continuously the rest of the way
+    /// around (an angular gradient wraps its last stop back into its first).
+    /// One continuous sweep cannot produce the horizontal seam that a pair of
+    /// half-masked strokes did.
+    private var caseBevel: some View {
+        PagerOutlines.outerCase.strokeBorder(
+            AngularGradient(
+                gradient: Gradient(stops: [
+                    .init(color: color(palette.edgeShadow), location: 0.307),
+                    .init(color: color(palette.edgeHighlight), location: 0.807),
+                ]),
+                center: .center),
+            lineWidth: 1.5)
     }
 
-    /// The bevel: a single thin (~1.5pt) stroke run around the *whole*
-    /// perimeter, colored by an `AngularGradient` centered on the shape.
-    /// `edgeHighlight` peaks where the sweep passes the top-left corner,
-    /// `edgeShadow` peaks at the bottom-right corner, and the two stops blend
-    /// continuously the rest of the way around (`AngularGradient` wraps its
-    /// last stop back into its first) — so the line is a light-catch at one
-    /// corner fading smoothly into a shadow-pool at the opposite corner,
-    /// with no hard seam anywhere. This replaced a pair of `strokeBorder`s
-    /// each masked to a top/bottom half with a hard 45%/55% stop: the mask's
-    /// discontinuity was exactly the horizontal line cutting across the face
-    /// that the visual gate flagged. A single continuous angular sweep can't
-    /// produce that seam by construction.
-    ///
-    /// The stop locations (0.307/0.807, not the "square" 0.375/0.875 that a
-    /// naive 45°/135° guess gives) are tuned for this landscape shape: the
-    /// bearing (clockwise from north) from the shape's center to the corner
-    /// arcs' centers depends on the aspect ratio, and this device is much
-    /// wider than it is tall. Re-tune if `cornerRadius` or the shell's aspect
-    /// ratio changes materially.
-    private var bevel: some View {
-        shape
-            .strokeBorder(
-                AngularGradient(
-                    gradient: Gradient(stops: [
-                        .init(color: color(palette.edgeShadow), location: 0.307),
-                        .init(color: color(palette.edgeHighlight), location: 0.807),
-                    ]),
-                    center: .center
-                ),
-                lineWidth: 1.5
-            )
-    }
-
-    /// Procedural grain, tiled across the whole case at low opacity with
-    /// overlay blending — this is what sells "molded plastic" instead of
-    /// "flat rounded rectangle." `.interpolation(.none)` keeps the coarse
-    /// grain blocky when it's scaled up from `NoiseTexture`'s low-res source
-    /// instead of being smoothed back into invisibility. See `NoiseTexture`
-    /// for why the tile is cached rather than regenerated per frame.
+    /// Procedural grain — what sells "moulded plastic" rather than "a filled
+    /// shape". Only the case gets it: the faceplate is a glossy part, and
+    /// leaving grain off it is most of what makes the two read as different
+    /// materials.
     private var noiseOverlay: some View {
         Image(nsImage: NoiseTexture.tile)
             .interpolation(.none)
             .resizable(resizingMode: .tile)
             .opacity(0.16)
             .blendMode(.overlay)
-            // No clip of its own — `body` clips the whole stack to the case.
             .allowsHitTesting(false)
+    }
+
+    // MARK: - Faceplate
+
+    /// The glossy black front panel, recessed into the case. Three effects:
+    /// sunk (inner shadow dark at top, lit lip at bottom), edged (a rim
+    /// picking up the case light), and glossy (a broad sheen whose lower
+    /// boundary is an ellipse, not the panel's own outline — that mismatch is
+    /// what reads as a reflection rather than a border).
+    private var faceplate: some View {
+        ZStack {
+            PagerOutlines.faceplate.fill(
+                LinearGradient(colors: [color(palette.faceplateTop), color(palette.faceplateBottom)],
+                               startPoint: .top, endPoint: .bottom)
+                    .shadow(.inner(color: .black.opacity(0.75), radius: 6, y: 4))
+                    .shadow(.inner(color: .white.opacity(0.10), radius: 2, y: -1)))
+
+            LinearGradient(
+                stops: [
+                    .init(color: .white.opacity(0.20), location: 0.0),
+                    .init(color: .white.opacity(0.05), location: 0.5),
+                    .init(color: .clear, location: 1.0),
+                ],
+                startPoint: .top, endPoint: .bottom)
+                .mask(Ellipse().scaleEffect(x: 1.3, y: 0.55).offset(y: -s(60)))
+                .clipShape(PagerOutlines.faceplate)
+                .blendMode(.screen)
+
+            PagerOutlines.faceplate.strokeBorder(color(palette.faceplateEdge).opacity(0.55), lineWidth: 1)
+        }
+        .allowsHitTesting(false)
+        .accessibilityIdentifier("faceplate")
+    }
+
+    // MARK: - Screen
+
+    /// The screen sits at its traced insets on three sides and absorbs all
+    /// remaining height on the fourth. That's the whole growth mechanism from
+    /// the content's side: a longer message makes this taller, which makes the
+    /// device taller, which the outlines absorb in their walls.
+    private var screen: some View {
+        content
+            .padding(.leading, s(PagerOutlines.lcd.minX))
+            .padding(.trailing, s(PagerOutlines.designSize.width - PagerOutlines.lcd.maxX))
+            .padding(.top, s(PagerOutlines.lcd.minY))
+            .padding(.bottom, s(PagerOutlines.designSize.height - PagerOutlines.lcd.maxY))
+    }
+
+    // MARK: - Top cap
+
+    /// The wordmark and the close key both live above both outline apexes, so
+    /// they are rigid: they never move or rescale however tall the device
+    /// gets. Anchoring them to the top edge is all that's needed.
+    private var topCapChrome: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+
+            Wordmark(palette: palette, scale: scale)
+                .frame(width: s(PagerOutlines.wordmark.width), height: s(PagerOutlines.wordmark.height))
+                .offset(x: s(PagerOutlines.wordmark.minX), y: s(PagerOutlines.wordmark.minY))
+
+            CloseKey(palette: palette, diameter: s(PagerOutlines.closeKeyRadius * 2),
+                     pressed: pressedKey == .close, action: onClose)
+                .offset(x: s(PagerOutlines.closeKeyCenter.x - PagerOutlines.closeKeyRadius),
+                        y: s(PagerOutlines.closeKeyCenter.y - PagerOutlines.closeKeyRadius))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - Bottom cap
+
+    /// The keys live below both apexes, so they translate with the bottom cap
+    /// and never distort. Anchoring them to the bottom edge reproduces that
+    /// translation exactly, with no delta arithmetic here.
+    private var keys: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color.clear
+            PagerKeyRow(palette: palette, scale: scale, pressed: pressedKey,
+                        onClear: onClear, onMenu: onMenu, onSend: onSend)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
     }
 
     private func color(_ hex: String) -> Color {
@@ -158,38 +190,75 @@ public struct PagerShell<Content: View>: View {
     }
 }
 
-/// The `LIMINAL` brand wordmark, **debossed** into the case rather than
-/// printed on it: the letterforms are filled in the case's own body color
-/// (so they read as the same plastic, not an applied label), with a dark
-/// "inner offset" peeking above each glyph and a 1px `brandHighlight` edge
-/// peeking *below* — the light-below edge is what sells "stamped into
-/// plastic"; the opposite order (light above, dark below) reads as raised
-/// lettering instead. All three copies are the same text at a 1pt vertical
-/// offset from each other, so the case-colored face on top covers all but a
-/// 1px sliver of each of the other two.
+/// The `LIMINAL` wordmark, **printed** on the faceplate rather than debossed
+/// into the case — the reference device prints its brand light on the glossy
+/// black panel, and a deboss reads as moulded plastic, which the faceplate
+/// isn't. One flat pass of `palette.wordmark`, no offset copies.
 struct Wordmark: View {
     let palette: CasePalette
+    let scale: CGFloat
 
     var body: some View {
-        ZStack {
-            text.foregroundColor(highlight).offset(y: 1)   // light lip, below
-            text.foregroundColor(ink).offset(y: -1)         // dark inner shadow, above
-            text.foregroundColor(face)                      // case-colored face, on top
-        }
-        .accessibilityIdentifier("brand-wordmark")
-    }
-
-    private var text: Text {
         Text("LIMINAL")
-            .font(.system(size: 12, weight: .heavy, design: .rounded))
-            .tracking(1.6)
+            .font(.system(size: 10 * scale / 0.742, weight: .medium, design: .rounded))
+            .tracking(2.4 * scale / 0.742)
+            .foregroundColor(color(palette.wordmark))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
+            .accessibilityIdentifier("brand-wordmark")
     }
-
-    private var face: Color { color(palette.shellBottom) }
-    private var ink: Color { color(palette.brandInk) }
-    private var highlight: Color { color(palette.brandHighlight) }
 
     private func color(_ hex: String) -> Color {
         Color(nsColor: TextUtil.color(fromHex: hex) ?? .gray)
+    }
+}
+
+/// The close key: a flat red disc in the case's top-left pocket, deliberately
+/// plain next to the moulded rocker and send keys. It used to be the third
+/// band of the rocker, where it was both the hardest glyph to centre and the
+/// narrowest band; out here it has fixed geometry and a fixed position.
+struct CloseKey: View {
+    let palette: CasePalette
+    let diameter: CGFloat
+    let pressed: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            face
+        }
+        .buttonStyle(FlatDiscButtonStyle(forcedPressed: pressed))
+        .frame(width: diameter, height: diameter)
+        .accessibilityIdentifier("key-close")
+        .accessibilityLabel("close")
+    }
+
+    private var face: some View {
+        ZStack {
+            Circle().fill(color(palette.closeTop))
+            Circle().strokeBorder(color(palette.closeBottom), lineWidth: max(1, diameter * 0.07))
+            Image(systemName: "xmark")
+                .font(.system(size: diameter * 0.42, weight: .bold))
+                .foregroundColor(color(palette.closeGlyph))
+        }
+    }
+
+    private func color(_ hex: String) -> Color {
+        Color(nsColor: TextUtil.color(fromHex: hex) ?? .gray)
+    }
+}
+
+/// Flat press feedback: a dim and a hair of shrink, no bevel inversion. The
+/// moulded keys invert their gradient because they're physical rockers; this
+/// one is a printed disc and should not pretend otherwise.
+struct FlatDiscButtonStyle: ButtonStyle {
+    var forcedPressed: Bool = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        let pressed = configuration.isPressed || forcedPressed
+        return configuration.label
+            .brightness(pressed ? -0.12 : 0)
+            .scaleEffect(pressed ? 0.92 : 1)
+            .animation(.easeOut(duration: 0.08), value: pressed)
     }
 }
