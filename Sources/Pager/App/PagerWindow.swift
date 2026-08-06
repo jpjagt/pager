@@ -3,9 +3,9 @@ import SwiftUI
 import PagerCore
 
 /// The key/unfocused state of one `PagerWindow`, published so the hosted
-/// SwiftUI content can animate on focus changes. A published object (rather
-/// than re-creating the root view) is what lets the shadow *animate* instead
-/// of snapping.
+/// SwiftUI content can react to focus changes (the LCD backlight dims when the
+/// window stops being key). A published object rather than a re-created root
+/// view, so the change can animate.
 @MainActor
 final class PagerWindowFocus: ObservableObject {
     @Published var isFocused = false
@@ -20,19 +20,17 @@ final class PagerWindowFocus: ObservableObject {
 /// 1. `canBecomeKey` **must** be overridden — borderless windows refuse key
 ///    status by default, and a window that can't be key can never give the
 ///    text field focus.
-/// 2. `hasShadow = false`, because AppKit's window shadow can't animate and
-///    this one has to soften when focus is lost. The shadow is drawn in
-///    SwiftUI instead, which means the window is deliberately *larger* than
-///    the visible device by `shadowMargin` on every side. Everything
-///    positional therefore goes through `visibleDeviceFrame` /
-///    `windowFrame(forVisibleDevice:)` — using the raw window frame for
-///    placement or persistence puts the pager visibly off its mark.
+/// 2. The shadow is AppKit's own (`hasShadow = true`), which on a transparent
+///    window is derived from the rendered content's alpha — so it traces the
+///    case's actual silhouette, end caps and all. It is *cached*, though:
+///    every content-driven resize has to `invalidateShadow()` or the pager
+///    keeps the shadow of whatever height it used to be. This replaced a
+///    hand-drawn SwiftUI shadow that existed so it could soften on focus
+///    loss; the window frame no longer carries transparent slack for a blur
+///    to land in, so it is exactly the device the user sees. (The focus cue
+///    itself didn't go away — `PagerDeviceView` dims the backlight.)
 @MainActor
 final class PagerWindow: NSWindow, NSWindowDelegate {
-    /// Transparent slack on every side of the device, holding the SwiftUI
-    /// shadow (and the LCD's outer glow, which also bleeds past the case).
-    static let shadowMargin: CGFloat = 34
-
     /// Debounce before a drag is written to `UserDefaults` — `windowDidMove`
     /// fires continuously while dragging and the frame is persisted on every
     /// link, so this must not run per frame.
@@ -77,7 +75,7 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
         // insertion point, any control it grows — from the *window's*
         // appearance, so that is pinned here too.
         appearance = NSAppearance(named: .aqua)
-        hasShadow = false // drawn in SwiftUI — see the type doc
+        hasShadow = true // AppKit's own, off the case silhouette — see the type doc
         level = .floating
         isMovableByWindowBackground = true
         isReleasedWhenClosed = false
@@ -92,8 +90,7 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         delegate = self
 
-        let hosting = NSHostingController(
-            rootView: PagerWindowChrome(focus: focus, margin: Self.shadowMargin) { content(focus) })
+        let hosting = NSHostingController(rootView: content(focus))
         // Height follows content: SwiftUI republishes its preferred size as
         // text wraps or an image lands, and the window tracks it.
         hosting.sizingOptions = [.preferredContentSize]
@@ -105,24 +102,18 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
 
     // MARK: - Geometry
 
-    /// The device as the user sees it — the window frame minus the shadow
-    /// slack. This, never `frame`, is what placement and persistence use.
-    var visibleDeviceFrame: CGRect {
-        frame.insetBy(dx: Self.shadowMargin, dy: Self.shadowMargin)
-    }
+    /// The device as the user sees it. Since the window dropped its shadow
+    /// slack this is just the frame — kept as a name of its own because it is
+    /// what `PagerLink.windowFrame` persists, and rects saved by older
+    /// versions are in these same (visible-device) coordinates, so they
+    /// restore unchanged.
+    var visibleDeviceFrame: CGRect { frame }
 
-    static func windowFrame(forVisibleDevice rect: CGRect) -> CGRect {
-        rect.insetBy(dx: -shadowMargin, dy: -shadowMargin)
-    }
-
-    /// The device's current natural size (the hosting view's fitting size,
-    /// less the shadow slack it is padded by).
+    /// The device's current natural size.
     private var deviceSize: CGSize {
         guard let view = contentViewController?.view else { return .zero }
         view.layoutSubtreeIfNeeded()
-        let fitting = view.fittingSize
-        return CGSize(width: max(fitting.width - 2 * Self.shadowMargin, 0),
-                      height: max(fitting.height - 2 * Self.shadowMargin, 0))
+        return view.fittingSize
     }
 
     // MARK: - Presentation
@@ -147,13 +138,13 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
             visible = PagerWindowPlacement.frame(size: size, in: screen, avoiding: occupied)
         }
 
-        let target = Self.windowFrame(forVisibleDevice: visible)
         isPlacing = true
-        setFrame(target, display: true)
+        setFrame(visible, display: true)
+        invalidateShadow()
         // Anchor to the *intended* top, not the resulting frame: SwiftUI can
         // still be a few points out on its first measurement (before the view
         // has a window backing it), and `reanchor()` pulls it back.
-        anchoredTop = target.maxY
+        anchoredTop = visible.maxY
         isPlacing = false
 
         NSApp.activateForWindow()
@@ -172,21 +163,19 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
         guard let top = anchoredTop else { return }
         var visible = CGRect(x: frame.minX, y: top - frame.height,
                              width: frame.width, height: frame.height)
-            .insetBy(dx: Self.shadowMargin, dy: Self.shadowMargin)
         if let screen = Self.screen(for: visible) ?? NSScreen.main {
             // Vertically only: the device's width never changes with content,
             // so a horizontal nudge here could only be fighting a drag the
             // user meant. Growth is downward, and that is what has to be caught.
             visible.origin.y = PagerWindowPlacement.clamp(visible, in: screen.visibleFrame).origin.y
         }
-        let target = Self.windowFrame(forVisibleDevice: visible)
-        guard abs(target.minX - frame.minX) > 0.5 || abs(target.minY - frame.minY) > 0.5 else { return }
+        guard abs(visible.minX - frame.minX) > 0.5 || abs(visible.minY - frame.minY) > 0.5 else { return }
         isPlacing = true
-        setFrameOrigin(target.origin)
+        setFrameOrigin(visible.origin)
         isPlacing = false
         // A clamp moves the top edge; that clamped top is the new anchor, or
         // the next resize would pull the device straight back off-screen.
-        anchoredTop = target.maxY
+        anchoredTop = visible.maxY
     }
 
     /// The attached display a remembered device rect belongs to: the one it
@@ -251,6 +240,10 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
     /// what a user expects; AppKit's own behavior (fixed bottom) makes the
     /// device crawl up the screen as you type.
     func windowDidResize(_ notification: Notification) {
+        // AppKit caches the shadow it derived from the old alpha mask; without
+        // this the device keeps the silhouette of whatever height it was
+        // before the message wrapped or an image landed.
+        invalidateShadow()
         reanchor()
     }
 
@@ -281,30 +274,5 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         flushFrame()
         onClosed?()
-    }
-}
-
-/// Draws the window's shadow — AppKit's own can't animate, and this one has to
-/// soften when the window stops being key. The device is padded by `margin` on
-/// every side to give the blur somewhere to land inside the (transparent)
-/// window.
-private struct PagerWindowChrome<Content: View>: View {
-    @ObservedObject var focus: PagerWindowFocus
-    let margin: CGFloat
-    let content: Content
-
-    init(focus: PagerWindowFocus, margin: CGFloat, @ViewBuilder content: () -> Content) {
-        self.focus = focus
-        self.margin = margin
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .shadow(color: .black.opacity(focus.isFocused ? 0.40 : 0.15),
-                    radius: focus.isFocused ? 22 : 9,
-                    y: focus.isFocused ? 10 : 4)
-            .padding(margin)
-            .animation(.easeOut(duration: 0.2), value: focus.isFocused)
     }
 }

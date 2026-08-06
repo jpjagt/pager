@@ -153,7 +153,7 @@ device chrome specifically, by rendering `PagerUI` states to a PNG headlessly.
 
 - **`PagerDeviceState`/`PagerDeviceActions`** — the entire input surface of the device: a plain struct of literals in, a struct of callbacks out. No AppKit-shell/store/engine types cross this boundary, which is what lets `DesignPreview` render any state (including ones hard to reach live, like `offline` or `update`) from a literal.
 - **`PagerDeviceView`** — composes the fixed vertical stack (offline banner → text → image → link banners → update banner) inside a `PagerShell` (case + keys + wordmark) wrapping an `LCDPanel` (screen).
-- **`Device/`** — `PagerShell`, `LCDPanel`, `Banner` (the chrome strip used for both link and update banners), `KeyShapes`, `NoiseTexture`.
+- **`Device/`** — `PagerShell`, `CaseOutline` (the case silhouette: flat top and bottom edges joined by squircle end caps; `PagerShell` measures its own content insets off it, and `PagerWindow`'s AppKit shadow traces it), `LCDPanel`, `Banner` (the chrome strip used for both link and update banners), `KeyShapes`, `NoiseTexture`.
 
 ### Diagnostics (sync logging + debug email)
 

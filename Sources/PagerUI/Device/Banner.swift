@@ -1,4 +1,5 @@
 import SwiftUI
+
 import PagerCore
 
 /// An inverted-video LCD status row — `backlight`-colored text on an `ink`

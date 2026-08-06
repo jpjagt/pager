@@ -9,8 +9,17 @@ import PagerCore
 /// wordmark — no screen — around whatever `content` (the `LCDPanel`) it's
 /// given.
 public struct PagerShell<Content: View>: View {
+    /// Depth of the plastic above the screen and below the key row. Also the
+    /// depth the side insets are measured at — the outline is at its most
+    /// intrusive at the very top and bottom of the content, so clearing the
+    /// curve there clears it everywhere.
+    private static var edgeInset: CGFloat { 14 }
+    /// Visible plastic between the contents and the case edge, on top of
+    /// whatever the cap curve itself takes away at `edgeInset`.
+    private static var sideMargin: CGFloat { 3 }
+
     private let palette: CasePalette
-    private let cornerRadius: CGFloat
+    private let outline: CaseOutline
     private let content: Content
     private let pressedKey: PagerKeyRow.Key?
     private let onClear: () -> Void
@@ -18,12 +27,12 @@ public struct PagerShell<Content: View>: View {
     private let onClose: () -> Void
     private let onSend: () -> Void
 
-    public init(palette: CasePalette, cornerRadius: CGFloat = 18, pressedKey: PagerKeyRow.Key? = nil,
+    public init(palette: CasePalette, outline: CaseOutline = CaseOutline(), pressedKey: PagerKeyRow.Key? = nil,
                 onClear: @escaping () -> Void = {}, onMenu: @escaping () -> Void = {},
                 onClose: @escaping () -> Void = {}, onSend: @escaping () -> Void = {},
                 @ViewBuilder content: () -> Content) {
         self.palette = palette
-        self.cornerRadius = cornerRadius
+        self.outline = outline
         self.pressedKey = pressedKey
         self.onClear = onClear
         self.onMenu = onMenu
@@ -32,25 +41,36 @@ public struct PagerShell<Content: View>: View {
         self.content = content()
     }
 
-    private var shape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+    private var shape: CaseOutline { outline }
+
+    /// How far in from the left and right edges the screen and keys have to
+    /// sit to clear the end caps, measured off the outline itself rather
+    /// than hard-coded — retuning the cap moves the contents with it.
+    private var sideInset: CGFloat {
+        outline.inset(atDepth: Self.edgeInset) + Self.sideMargin
     }
 
     public var body: some View {
         ZStack {
-            body(shape)
+            caseBody(shape)
             noiseOverlay
             bevel
             VStack(spacing: 0) {
                 content
-                    .padding(.horizontal, cornerRadius * 0.55)
-                    .padding(.top, cornerRadius * 0.55)
+                    .padding(.horizontal, sideInset)
+                    .padding(.top, Self.edgeInset)
                 Spacer(minLength: 8)
                 keyRow
-                    .padding(.horizontal, cornerRadius * 0.7)
-                    .padding(.bottom, cornerRadius * 0.55)
+                    .padding(.horizontal, sideInset)
+                    .padding(.bottom, Self.edgeInset)
             }
         }
+        // The LCD's outer glow is a backlight bleeding onto the surrounding
+        // *plastic* — clipped to the case so it stops at the edge instead of
+        // hanging in the air outside the device. This is also what lets the
+        // window drop AppKit's shadow off a clean silhouette: the window is
+        // exactly the device now, with no soft halo for the shadow to pick up.
+        .clipShape(shape)
         .accessibilityIdentifier("pager-shell")
     }
 
@@ -74,7 +94,7 @@ public struct PagerShell<Content: View>: View {
     /// stacked into a heavy vignette that read as two horizontal stripes
     /// rather than an edge. Dropped entirely; the whole bevel illusion now
     /// comes from the single stroked ring in `bevel`.
-    private func body(_ shape: RoundedRectangle) -> some View {
+    private func caseBody(_ shape: CaseOutline) -> some View {
         shape
             .fill(
                 LinearGradient(
@@ -129,7 +149,7 @@ public struct PagerShell<Content: View>: View {
             .resizable(resizingMode: .tile)
             .opacity(0.16)
             .blendMode(.overlay)
-            .clipShape(shape)
+            // No clip of its own — `body` clips the whole stack to the case.
             .allowsHitTesting(false)
     }
 

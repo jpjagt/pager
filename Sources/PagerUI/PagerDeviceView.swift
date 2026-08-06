@@ -20,12 +20,12 @@ import PagerCore
 /// all grow the device — which is what `PagerWindow` measures via this
 /// view's fitting size.
 public struct PagerDeviceView: View {
-    /// The LCD's usable content width: 360 (device) − 2× shell content inset
-    /// (`PagerShell`'s default `cornerRadius` 18 × 0.55) − 2× `LCDPanel`'s
-    /// own internal padding (10). Only used to size the image row; a few
-    /// points of slack here just leaves the image narrower than the panel,
-    /// never clipped or overflowing.
-    private static let lcdContentWidth: CGFloat = 320
+    /// The LCD's usable content width: 360 (device) − 2× `PagerShell`'s side
+    /// inset (~22, set by where the case's end caps sit at the top of the
+    /// screen) − 2× `LCDPanel`'s own internal padding (10). Only used to size
+    /// the image row; a few points of slack here just leaves the image
+    /// narrower than the panel, never clipped or overflowing.
+    private static let lcdContentWidth: CGFloat = 294
     private static let deviceWidth: CGFloat = 360
     /// Shared by the message field and its hand-drawn placeholder, which have
     /// to lay out identically or the prompt sits off the typing line.

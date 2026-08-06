@@ -80,6 +80,182 @@ and to avoid reading as a metallic material.
 
 Deleted: `Sources/Pager/UI/PopoverView.swift`, `TextUtil.hex(from:)`.
 
+## Reference: How to visually implement skeumorphic elements
+Good specimen — mid-90s translucent "smoke" ABS over a matte-textured mold, shot with a soft top-left key. Almost everything you're seeing decomposes into three things: **layered inset shapes with inner shadows**, **two frequencies of noise**, and **gloss masks that don't follow the silhouette**.
+
+## Case
+
+### Geometry — levels, not one shape
+
+Four concentric levels, each an `InsettableShape` you define once and reuse:
+
+1. outer shell (superellipse, slightly bulged sides — `RoundedRectangle(cornerRadius: 28, style: .continuous)` is close but flatten the top-left/top-right shoulders)
+2. raised top plateau (inset ~10, higher elevation, this is where the Motorola logo sits)
+3. LCD bezel well (recessed, elevation drops)
+4. button trough at the bottom (recessed again)
+
+Make each conform to `InsettableShape` — store an `inset: CGFloat` and apply it in `path(in:)`. You need this for the noise masking below, and it saves you writing every shape twice.
+
+Elevation change is done entirely with layered shadows on the *fill style*, not the view:
+
+```swift
+shape.fill(
+    baseGradient
+        .shadow(.inner(color: .black.opacity(0.55), radius: 7, y: 5))   // wall away from light
+        .shadow(.inner(color: .white.opacity(0.20), radius: 3, y: -2))  // lit lip
+)
+.overlay(shape.strokeBorder(rimGradient, lineWidth: 1.2))
+```
+
+`rimGradient` is a `LinearGradient` from `.white.opacity(0.5)` (top-left) through `.clear` (middle) to `.black.opacity(0.4)` (bottom-right) — that single stroke does most of the "molded plastic" work. Raised levels get the inner shadow flipped (light at top, dark at bottom); recessed levels get it as written.
+
+### Base color and translucency
+
+Not a flat fill. Three stacked layers:
+
+- **Base:** radial gradient, `#5C1016` center → `#2A070B` at the corners.
+- **Internal mottle:** low-frequency value noise (Perlin/simplex, feature size ~40–80pt), mapped to opacity 0–0.35 of a darker maroon, `.multiply` blend. This is the blotchy "you can see the PCB through it" look.
+- **Backlight blooms:** 3–5 blurred ellipses in `#D8241E`, `blur(radius: 30–60)`, `.blendMode(.plusLighter)`, clipped to the shell. Put them where the plastic is thin — the outer left/right flanks and the bottom corners, exactly where the photo glows.
+
+`MeshGradient` (iOS 18) is a decent shortcut for base + blooms in one layer if you don't want the blur cost.
+
+### The noise — what it actually is
+
+It's **not** white noise, and that matters. Two components:
+
+- **High-frequency grain:** monochromatic (luminance-only), Gaussian-distributed, and *slightly low-pass filtered* — grain clusters are ~1.5–2px, not 1px. Pure per-pixel white noise reads as digital dirt; the correlation is what makes it read as bead-blasted mold texture (an MT-11010-ish finish) plus sensor grain.
+- **Amplitude is signal-dependent.** It's strongest in midtones and collapses in the deep shadows and the blown highlights. This is the real reason it "fades out near the surface edges" — the edges are darker from shading falloff, so the grain dies there. Geometric masking alone will look wrong; modulate by luminance too.
+
+Generation, in order of preference:
+
+```metal
+// grain.metal — iOS 17+
+[[ stitchable ]] half4 grain(float2 pos, half4 color, float amount, float size, float seed) {
+    float2 p = floor(pos / size);                       // quantize → grain size / correlation
+    float n = fract(sin(dot(p + seed, float2(12.9898, 78.233))) * 43758.5453);
+    half lum = dot(color.rgb, half3(0.299, 0.587, 0.114));
+    half falloff = 4.0h * lum * (1.0h - lum);           // suppress in shadows + highlights
+    half g = half(n - 0.5) * half(amount) * falloff;
+    return half4(color.rgb + g * color.a, color.a);
+}
+```
+
+Applied as `.colorEffect(ShaderLibrary.grain(.float(0.18), .float(1.6), .float(seed)))`. The `4·L·(1−L)` term gives you the signal-dependent amplitude for free.
+
+If you'd rather stay off Metal: generate a 256×256 tile once with `CIRandomGenerator` → `CIColorMatrix` (desaturate) → `CIGaussianBlur(radius: 0.6)`, cache the `CGImage`, and draw it as `Image(decorative:).resizable(resizingMode: .tile).blendMode(.overlay).opacity(0.09)`. Cheaper, but you lose the luminance modulation.
+
+Blend mode: `.overlay` or `.softLight`, never `.normal`. Overlay preserves the underlying gradient and only perturbs it.
+
+### Clipping the noise with faded edges
+
+The trick is that you want a **hard outer boundary with a soft inward falloff** — mask alpha 0 at the edge, 1 at ~2×fade inward. Since your shapes are insettable:
+
+```swift
+struct SurfaceFade<S: InsettableShape>: View {
+    let shape: S
+    var fade: CGFloat = 14
+    var body: some View {
+        shape.inset(by: fade)
+            .fill(.white)
+            .blur(radius: fade)      // spreads back out to the true edge, hitting ~0 there
+            .clipShape(shape)        // guarantees nothing bleeds past the silhouette
+    }
+}
+```
+
+Then `noiseLayer.mask { SurfaceFade(shape: plateau) }`. Each surface gets its own instance with its own fade radius — the small plateau wants fade ≈ 8, the big shell ≈ 20.
+
+If a shape isn't insettable, do it subtractively instead: fill white, then draw a blurred `strokeBorder` on top with `.blendMode(.destinationOut)` inside a `.compositingGroup()`.
+
+One thing to get right: mask *only the noise*, not the base gradient. The base color must stay crisp all the way to the stroke, or the whole thing goes muddy.
+
+### Outer edge of the case
+
+The silhouette edge is three separate things stacked:
+
+- a 1pt `strokeBorder` with the light-direction gradient (bright top-left, dark bottom-right)
+- just inside it, a second `strokeBorder` at ~2.5pt in `.black.opacity(0.35)` blurred by 3 and clipped to the shape — the wall falling away
+- the red translucent glow *bleeding past* the silhouette: duplicate the shell shape, fill `#C81E20`, `blur(20)`, `.plusLighter`, and place it *behind* everything. That's the halo in the photo where light passes through the flanks.
+
+Plus a genuine outer `.shadow(color: .black.opacity(0.5), radius: 18, y: 10)` for the drop onto the background.
+
+## Buttons
+
+Both are glossy — meaning a **sharp, high-contrast highlight** rather than the matte case's diffuse noise. No grain on these at all; that contrast is what sells the material difference.
+
+### Shared gloss anatomy (per button)
+
+Layer stack, bottom to top:
+
+1. **Recess:** the case's button well — the button shape scaled up ~1.06, filled with case color, inner shadow dark from the top. Sells the button sitting *in* something.
+2. **Body:** `LinearGradient(colors: [Color(white: 0.16), .black], startPoint: .top, endPoint: .bottom)`.
+3. **Top gloss:** the strong white gradient you noticed. Critically, its lower boundary is a *curve that doesn't match the button outline* — that's what makes it read as a reflection rather than a border.
+
+```swift
+LinearGradient(
+    stops: [.init(color: .white.opacity(0.92), location: 0.0),
+            .init(color: .white.opacity(0.35), location: 0.45),
+            .init(color: .clear,               location: 1.0)],
+    startPoint: .top, endPoint: .bottom
+)
+.mask {
+    Ellipse()
+        .scaleEffect(x: 1.15, y: 0.72)
+        .offset(y: -h * 0.34)          // pushes the ellipse up; its bottom arc = gloss terminator
+}
+.clipShape(buttonShape)
+.blendMode(.screen)
+```
+
+4. **Bounce light:** thin `strokeBorder` on the bottom edge only (mask a gradient to the lower third), `.white.opacity(0.25)`, 0.75pt.
+5. **Contact shadow:** `.shadow(color: .black.opacity(0.6), radius: 3, y: 2)` on the button group.
+
+### Left rocker (the "eye")
+
+A vesica/lens: two mirrored cubic curves meeting at pointed tips, rotated ~3° clockwise. Build it explicitly rather than fighting `Ellipse`:
+
+```swift
+p.move(to: leftTip)
+p.addCurve(to: rightTip, control1: .init(x: w*0.25, y: -bulge), control2: .init(x: w*0.75, y: -bulge))
+p.addCurve(to: leftTip,  control1: .init(x: w*0.75, y:  bulge), control2: .init(x: w*0.25, y:  bulge))
+```
+
+The upper `bulge` is larger than the lower one — the shape is asymmetric top/bottom in the photo. Split it into two switches with a narrow vertical wedge subtracted at center (`.blendMode(.destinationOut)`), and give each half its own gloss ellipse so the highlight breaks at the seam. Glyphs (dot, triangle) go in `.white.opacity(0.85)`, small, with a 0.5pt dark offset beneath them for the debossed look.
+
+### Right lozenge (oval with three corners)
+
+Don't try to do this with curves-by-eye. Define three corner points with **independent radii** and let `addArc(tangent1End:tangent2End:radius:)` fillet between them:
+
+```swift
+struct Lozenge: InsettableShape {
+    var inset: CGFloat = 0
+    func path(in r: CGRect) -> Path {
+        let b = r.insetBy(dx: inset, dy: inset)
+        let a = CGPoint(x: b.minX + b.width*0.02, y: b.midY + b.height*0.18) // pronounced
+        let c = CGPoint(x: b.maxX,                y: b.midY - b.height*0.10) // pronounced
+        let d = CGPoint(x: b.minX + b.width*0.30, y: b.minY)                 // soft
+        var p = Path()
+        p.move(to: CGPoint(x: b.midX, y: b.minY))
+        p.addArc(tangent1End: d, tangent2End: a, radius: b.height*0.55)  // soft corner
+        p.addArc(tangent1End: a, tangent2End: c, radius: b.height*0.22)  // sharp
+        p.addArc(tangent1End: c, tangent2End: d, radius: b.height*0.28)  // sharp
+        p.closeSubpath()
+        return p
+    }
+    func inset(by amount: CGFloat) -> Self { var s = self; s.inset += amount; return s }
+}
+```
+
+Tune the three radii independently — that ratio (0.55 vs 0.22/0.28) is precisely what gives "oval with three corners, two more pronounced."
+
+The green bar inside is a `Capsule` inset ~4pt, filled with a vertical gradient `#1FE04A → #0B8A2C`, plus a duplicate underneath blurred by 8 in `.plusLighter` for the emission, plus an inner shadow at the top so it sits *in* the button.
+
+## Layer order, whole thing
+
+`red halo → shell fill+mottle+blooms → shell rim → grain masked to shell fade → plateau (inner shadow, rim) → grain masked to plateau fade → LCD well → button troughs → buttons (no grain) → global drop shadow`
+
+The single biggest fidelity lever is the grain's luminance-dependent falloff. Uniform-opacity noise is the thing that makes SwiftUI plastic look like a Figma mockup.
+
 ---
 
 ## Task 1: Theme data model
