@@ -6,6 +6,12 @@ import PagerCore
 /// `design-preview` construct any visual state as a literal and lets a later
 /// task's thin adapter map live models onto these fields without the view
 /// itself ever knowing about `LinkViewModel`/`UpdateController`.
+/// What a drag currently hovering over the device would leave behind. Drives
+/// the drop prompt on the LCD; nil means no drag is over the pager.
+public enum DropTargetKind {
+    case image, text
+}
+
 public struct PagerDeviceState {
     /// Names match `AppearancePrefs.screenColor`/`caseColor`.
     public var screenColor: ScreenColor
@@ -22,6 +28,11 @@ public struct PagerDeviceState {
     public var updateBannerVersion: String?
     /// URLs detected in `text`, one link banner rendered per entry.
     public var links: [URL]
+    /// Non-nil while a droppable drag hovers over the device: the screen shows
+    /// a dashed drop zone instead of its content. Purely an overlay — the
+    /// device's height must not change mid-drag or the drop target would move
+    /// out from under the cursor.
+    public var dropTarget: DropTargetKind?
 
     public init(
         screenColor: ScreenColor = .green,
@@ -31,7 +42,8 @@ public struct PagerDeviceState {
         isWindowFocused: Bool = true,
         isOffline: Bool = false,
         updateBannerVersion: String? = nil,
-        links: [URL] = []
+        links: [URL] = [],
+        dropTarget: DropTargetKind? = nil
     ) {
         self.screenColor = screenColor
         self.caseColor = caseColor
@@ -41,6 +53,7 @@ public struct PagerDeviceState {
         self.isOffline = isOffline
         self.updateBannerVersion = updateBannerVersion
         self.links = links
+        self.dropTarget = dropTarget
     }
 }
 

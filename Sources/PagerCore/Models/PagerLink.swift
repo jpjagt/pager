@@ -29,8 +29,12 @@ public struct AppearancePrefs: Codable, Equatable {
         // Absent in prefs saved before the theme reskin (the old free-form
         // color field is ignored, not migrated — an explicit product
         // decision). A decode failure here would wipe the user's links, so
-        // these must default rather than throw.
-        screenColor = try container.decodeIfPresent(ScreenColor.self, forKey: .screenColor) ?? .green
+        // these must default rather than throw — including for rawValues of
+        // since-removed cases, which `decodeIfPresent(ScreenColor.self, …)`
+        // would throw on. "yellow" was retired; orange is its nearest hue.
+        let screenRaw = try container.decodeIfPresent(String.self, forKey: .screenColor)
+        screenColor = ScreenColor(rawValue: screenRaw ?? "")
+            ?? (screenRaw == "yellow" ? .orange : .green)
         caseColor = try container.decodeIfPresent(CaseColor.self, forKey: .caseColor) ?? .darkGrey
     }
 }

@@ -58,9 +58,10 @@ public struct PagerDeviceView: View {
         }
         .frame(width: Self.deviceWidth)
         // An unfocused window's backlight reads a touch duller — the same
-        // cue a real inactive window gives, just applied to the LCD glow
-        // rather than a whole-window dim.
-        .opacity(state.isWindowFocused ? 1 : 0.88)
+        // cue a real inactive window gives. Desaturation rather than opacity:
+        // a translucent device stops reading as a physical object, while a
+        // slightly greyed one just looks powered-down.
+        .saturation(state.isWindowFocused ? 1 : 0.9)
         // The device is a physical object with a lit, light-colored screen: it
         // looks the same on a dark-mode Mac as on a light-mode one. Every color
         // in here comes from a palette, so nothing *should* read the
@@ -75,6 +76,17 @@ public struct PagerDeviceView: View {
 
     @ViewBuilder
     private var screenContent: some View {
+        contentStack
+            // An *overlay*, never a branch in the stack: it paints over the
+            // screen without taking part in layout, so the device keeps
+            // whatever height its content already gave it. Swapping content
+            // for a prompt instead would resize the window mid-drag and slide
+            // the drop target out from under the cursor.
+            .overlay { dropZone }
+    }
+
+    @ViewBuilder
+    private var contentStack: some View {
         VStack(alignment: .leading, spacing: 6) {
             if state.isOffline {
                 Banner(palette: screenPalette, style: .plain("offline — retrying"))
@@ -128,6 +140,29 @@ public struct PagerDeviceView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// The dashed drop zone shown while a droppable drag is over the device.
+    /// Filled with the backlight so it hides the message underneath rather than
+    /// letting the prompt overprint it — the LCD reads as cleared, but nothing
+    /// below it has actually moved.
+    @ViewBuilder
+    private var dropZone: some View {
+        if let kind = state.dropTarget {
+            ZStack {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(nsColor: TextUtil.color(fromHex: screenPalette.backlight) ?? .white))
+                RoundedRectangle(cornerRadius: 4)
+                    .strokeBorder(
+                        ink.opacity(0.5),
+                        style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                Text(kind == .image ? "drop image…" : "drop text…")
+                    .font(Self.messageFont)
+                    .foregroundColor(ink.opacity(0.75))
+            }
+            .allowsHitTesting(false) // the drag is the window's business, not a control's
+            .accessibilityIdentifier("drop-zone")
         }
     }
 

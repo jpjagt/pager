@@ -51,8 +51,8 @@ public struct LCDPanel<Content: View>: View {
             // went uniformly soft with no "hot" center.
             shape
                 .fill(backlight)
-                .shadow(color: glow.opacity(0.9), radius: 6)
-                .shadow(color: glow.opacity(0.55), radius: 22)
+                .shadow(color: glow.opacity(0.65), radius: 6)
+                .shadow(color: glow.opacity(0.35), radius: 22)
         )
         .overlay(rim)
         .accessibilityIdentifier("lcd-panel")

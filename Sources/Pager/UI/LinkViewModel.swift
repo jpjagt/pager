@@ -22,6 +22,7 @@ final class LinkViewModel: ObservableObject {
     private let session: EditorSession
     private let engine: SyncEngine?
     private var hintTask: Task<Void, Never>?
+    private var graceTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
     /// The `···` key. The app shell pops the AppKit menu.
@@ -90,6 +91,62 @@ final class LinkViewModel: ObservableObject {
         syncFromSession()
     }
 
+    // MARK: - Open-fresh editing
+
+    /// How long after opening a pager typing still means "start a new message"
+    /// rather than "append to this one". Long enough to read what's on screen
+    /// and decide, short enough that a window left open is a normal editor
+    /// again by the time you come back to it.
+    private static let freshEditGrace: TimeInterval = 10
+
+    /// The window just opened: arm the session so the first characters typed
+    /// replace the message, and start the clock that ends that.
+    func beginFreshEdit() {
+        session.beginFreshEdit()
+        graceTask?.cancel()
+        graceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.freshEditGrace * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.session.endFreshEdit()
+        }
+    }
+
+    /// A click inside the window: the caret is where the user put it, so typing
+    /// is editing. ⌘Z can still bring back an already-replaced message.
+    func cancelReplaceOnType() {
+        session.cancelReplaceOnType()
+    }
+
+    /// Runs just before a key press reaches the message field. On the first
+    /// typed character of a freshly opened pager the old message is cleared —
+    /// in the field editor as well as the session — so the character lands in
+    /// an empty field. Anything that isn't typing (arrows, delete, escape)
+    /// means the user is working on what's there, and ends the window instead.
+    private func prepareForFirstKeystroke(_ event: NSEvent, in window: PagerWindow) {
+        guard session.isArmedForFreshEdit else { return }
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard TypingKey.isInsertion(characters: event.characters,
+                                    hasNonShiftModifier: !modifiers.subtracting(.shift).isEmpty) else {
+            session.cancelReplaceOnType()
+            return
+        }
+        guard session.takeFreshEdit() else { return }
+        window.setMessageFieldText("")
+        syncFromSession()
+    }
+
+    /// ⌘Z after the first keystroke wiped the old message (or image). Returns
+    /// false when there is nothing of ours to undo, so the field editor's own
+    /// undo can handle the shortcut instead.
+    private func restoreReplacedContent(in window: PagerWindow) -> Bool {
+        guard session.restoreReplaced() else { return false }
+        syncFromSession()
+        // Same reason the wipe goes through the window: the field is mid-edit,
+        // so the restored message has to be written into the field editor.
+        window.setMessageFieldText(session.text)
+        return true
+    }
+
     private func syncFromSession() {
         text = session.text
         draftImage = session.draftImageData
@@ -100,64 +157,95 @@ final class LinkViewModel: ObservableObject {
     /// ⌘V with an image (or image file) on the pasteboard. The image becomes
     /// the DRAFT — committed like typed text. Returns whether the pasteboard
     /// held an image we took; false means the caller should let the text field
-    /// handle the paste natively.
+    /// handle the paste natively (text pastes are the field's own business).
     @discardableResult
     func pasteFromGeneralPasteboard() -> Bool {
-        let pasteboard = NSPasteboard.general
-        var imageDatas: [Data] = []
-        for type in [NSPasteboard.PasteboardType.png, .tiff] {
-            if let data = pasteboard.data(forType: type) { imageDatas.append(data) }
+        guard case .image(let raw)? = PasteboardPayload.read(NSPasteboard.general) else {
+            return false
         }
-        let fileURLs = pasteboard.readObjects(
-            forClasses: [NSURL.self],
-            options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
-        for url in fileURLs {
-            if let data = try? Data(contentsOf: url) { imageDatas.append(data) }
-        }
-        guard case .image(let raw)? = DropPayloadClassifier.classify(
-            imageDatas: imageDatas, strings: []) else { return false }
-        do {
-            try session.setImage(raw)
-            draftImage = session.draftImageData
-            text = ""
-            detectedURLs = []
-        } catch {
-            // Same signal the menu-bar drop path gives for an unreadable
-            // image; the device has no error row to put a message in.
-            NSSound.beep()
-        }
+        take(.image(raw))
         return true
     }
 
-    private var pasteMonitor: Any?
+    /// A drop onto the pager window. Everything readable off the drag, left to
+    /// the same classifier the menu-bar drop and ⌘V use — but landing in the
+    /// draft rather than being sent, because the window is the editing surface.
+    func accept(imageDatas: [Data], strings: [String]) {
+        guard let payload = DropPayloadClassifier.classify(
+            imageDatas: imageDatas, strings: strings) else {
+            NSSound.beep() // nothing here we can hold
+            return
+        }
+        take(payload)
+    }
 
-    /// Installed while the pager's window is open. ⌘V never reaches SwiftUI's
-    /// `onPasteCommand`: the Edit menu's key equivalent dispatches `paste:` to
-    /// the field editor (first responder), which beeps on an image-only
-    /// pasteboard. This monitor intercepts ⌘V first, takes the image if there
-    /// is one, and passes everything else through to the text field. Verified
-    /// still necessary against a key `PagerWindow` (Task 9), not just the
-    /// popover it was written for.
-    func installPasteMonitor() {
-        guard pasteMonitor == nil else { return }
-        pasteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+    private func take(_ payload: DropPayload) {
+        switch payload {
+        case .image(let raw):
+            do {
+                try session.setImage(raw)
+            } catch {
+                // Same signal the menu-bar drop path gives for an unreadable
+                // image; the device has no error row to put a message in.
+                NSSound.beep()
+                return
+            }
+        case .text(let dropped):
+            // Replaces the draft outright rather than inserting at the caret:
+            // a pager holds one short message, and the drop landed on the
+            // device, not at a text position.
+            session.replaceText(dropped)
+        }
+        syncFromSession()
+    }
+
+    private var keyMonitor: Any?
+
+    /// Installed while the pager's window is open. Sees every key press before
+    /// the text field does, which is the only place three things can happen:
+    ///
+    /// - **⌘V** never reaches SwiftUI's `onPasteCommand`: the Edit menu's key
+    ///   equivalent dispatches `paste:` to the field editor (first responder),
+    ///   which beeps on an image-only pasteboard. Intercepted here so an image
+    ///   becomes the draft; anything else falls through to the field.
+    /// - **⌘Z** goes to the field editor's own undo stack, which knows nothing
+    ///   about the content an open-fresh edit replaced (see `session`). When
+    ///   there is something to put back, this takes the shortcut; otherwise the
+    ///   field's ordinary undo runs.
+    /// - **The first character typed into a just-opened pager** clears the old
+    ///   message so the keystroke starts a new one. It has to happen here,
+    ///   ahead of the field editor, and not by shortening the value in the
+    ///   binding — SwiftUI ignores a shortened value while the field is being
+    ///   edited (verified), and the next keystroke then re-syncs this model
+    ///   from the field's own unwiped string, which just reads as an append.
+    func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self,
-                  event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-                  event.charactersIgnoringModifiers == "v",
                   event.window?.isKeyWindow == true,
-                  (event.window as? PagerWindow)?.linkId == self.linkId
+                  let window = event.window as? PagerWindow,
+                  window.linkId == self.linkId
             else { return event }
-            return self.pasteFromGeneralPasteboard() ? nil : event
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags == .command {
+                switch event.charactersIgnoringModifiers {
+                case "v": return self.pasteFromGeneralPasteboard() ? nil : event
+                case "z": return self.restoreReplacedContent(in: window) ? nil : event
+                default: return event
+                }
+            }
+            self.prepareForFirstKeystroke(event, in: window)
+            return event
         }
     }
 
-    func removePasteMonitor() {
-        if let monitor = pasteMonitor { NSEvent.removeMonitor(monitor) }
-        pasteMonitor = nil
+    func removeKeyMonitor() {
+        if let monitor = keyMonitor { NSEvent.removeMonitor(monitor) }
+        keyMonitor = nil
     }
 
     deinit {
-        if let monitor = pasteMonitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = keyMonitor { NSEvent.removeMonitor(monitor) }
     }
 
     /// A tap on the draft image: write the JPEG to a temp file and hand it to

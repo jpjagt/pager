@@ -18,6 +18,10 @@ struct PagerDeviceAdapter: View {
     @ObservedObject var updates: UpdateController
     @ObservedObject var focus: PagerWindowFocus
     @ObservedObject var previews: ImageURLPreviewLoader
+    /// What is hovering over the device right now. View state, not model state:
+    /// it exists only for the duration of a drag and nothing outside this view
+    /// (or the drop zone it draws) has any use for it.
+    @State private var dropTarget: DropTargetKind?
 
     init(model: LinkViewModel, updates: UpdateController, focus: PagerWindowFocus) {
         self.model = model
@@ -28,6 +32,11 @@ struct PagerDeviceAdapter: View {
 
     var body: some View {
         PagerDeviceView(state: state, actions: actions)
+            .onDrop(of: PagerDropDelegate.acceptedTypes, delegate: PagerDropDelegate(
+                onHover: { dropTarget = $0 },
+                onPayload: { imageDatas, strings in
+                    model.accept(imageDatas: imageDatas, strings: strings)
+                }))
     }
 
     private var state: PagerDeviceState {
@@ -41,7 +50,8 @@ struct PagerDeviceAdapter: View {
             isWindowFocused: focus.isFocused,
             isOffline: model.showOfflineHint,
             updateBannerVersion: updates.bannerVersion,
-            links: model.detectedURLs.map(\.url))
+            links: model.detectedURLs.map(\.url),
+            dropTarget: dropTarget)
     }
 
     private var actions: PagerDeviceActions {

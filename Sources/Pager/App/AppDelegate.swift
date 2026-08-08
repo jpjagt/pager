@@ -234,8 +234,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.onFrameChanged = { [weak self] rect in
             self?.persistWindowFrame(rect, linkId: linkId)
         }
+        window.onMouseDown = { [weak model] in model?.cancelReplaceOnType() }
         window.onClosed = { [weak self] in
-            self?.models[linkId]?.removePasteMonitor()
+            self?.models[linkId]?.removeKeyMonitor()
             self?.models[linkId] = nil
             self?.windows[linkId] = nil
         }
@@ -244,7 +245,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         models[linkId] = model
         window.show(persistedVisibleFrame: link.windowFrame,
                     avoiding: occupiedFrames(excluding: linkId))
-        model.installPasteMonitor()
+        model.installKeyMonitor()
+        // Only on a fresh open, never on the raise path above: typing into a
+        // pager you just opened starts a new message; typing into one that has
+        // been sitting there is ordinary editing.
+        model.beginFreshEdit()
         return window
     }
 

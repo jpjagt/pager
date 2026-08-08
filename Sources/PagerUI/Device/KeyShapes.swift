@@ -110,18 +110,24 @@ struct RockerSeam: Shape {
     }
 }
 
-/// The send key's right-pointing arrow — the Memo Classic's own send glyph,
-/// inverted: that device prints a green bar on a black button, ours prints
-/// white on the green button. A triangle whose corners are eased by short
-/// cubic fillets, because a raw triangle's three points look printed and the
-/// key's whole story is moulded plastic.
+/// The send key's right-pointing arrow — a shaft with a triangular head, not a
+/// play triangle: the key sends, it doesn't play. Every corner is eased by a
+/// short cubic fillet, because raw points look printed and the key's whole
+/// story is moulded plastic.
 struct ArrowGlyph: Shape {
     func path(in rect: CGRect) -> Path {
-        let tip = CGPoint(x: rect.maxX, y: rect.midY)
-        let topLeft = CGPoint(x: rect.minX, y: rect.minY)
-        let bottomLeft = CGPoint(x: rect.minX, y: rect.maxY)
-        let corners = [tip, bottomLeft, topLeft]
-        let ease = min(rect.width, rect.height) * 0.22
+        let shaftHalf = rect.height * 0.19
+        let headBase = rect.minX + rect.width * 0.52
+        let corners = [
+            CGPoint(x: rect.maxX, y: rect.midY),               // tip
+            CGPoint(x: headBase, y: rect.maxY),                // head, bottom barb
+            CGPoint(x: headBase, y: rect.midY + shaftHalf),    // concave notch
+            CGPoint(x: rect.minX, y: rect.midY + shaftHalf),   // shaft, bottom-left
+            CGPoint(x: rect.minX, y: rect.midY - shaftHalf),   // shaft, top-left
+            CGPoint(x: headBase, y: rect.midY - shaftHalf),    // concave notch
+            CGPoint(x: headBase, y: rect.minY),                // head, top barb
+        ]
+        let ease = min(rect.width, rect.height) * 0.12
 
         func lerp(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
             CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
@@ -213,8 +219,12 @@ public struct PagerKeyFace<S: Shape, Label: View>: View {
 
     public var body: some View {
         ZStack {
+            // The recess is a stroke, not a scaled copy of the shape: half the
+            // stroke hides under the fill, so what shows is a ring of constant
+            // width hugging the outline. Scaling the shape instead produced a
+            // ring that was visibly wider along the flatter parts of the curve.
             if showsRecess {
-                shape.fill(Color.black.opacity(0.32)).scaleEffect(pressed ? 1.05 : 1.14)
+                shape.stroke(Color.black.opacity(0.32), lineWidth: pressed ? 3 : 7)
             }
 
             // Body — the gradient direction inverts when pressed, so the bevel
@@ -231,8 +241,12 @@ public struct PagerKeyFace<S: Shape, Label: View>: View {
             }
 
             // Top gloss. Its lower boundary is an ellipse mask offset upward,
-            // not the shape's own outline. Pressed pushes the ellipse down and
-            // dims it hard — a sunk key catches far less of the case light.
+            // not the shape's own outline. The ellipse alone clipped the key's
+            // upper corners (the lozenge's top-right, the leaf's top-left), so
+            // the mask unions in a rectangle pinned to the top edge — full
+            // coverage up top, the elliptical boundary below. Pressed pushes
+            // the ellipse down and dims it hard — a sunk key catches far less
+            // of the case light.
             LinearGradient(
                 stops: [
                     .init(color: .white.opacity(pressed ? 0.12 : 0.92), location: 0.0),
@@ -240,7 +254,10 @@ public struct PagerKeyFace<S: Shape, Label: View>: View {
                     .init(color: .clear, location: 1.0),
                 ],
                 startPoint: .top, endPoint: .bottom)
-                .mask(Ellipse().scaleEffect(x: 1.2, y: 0.7).offset(y: pressed ? 2 : -7))
+                .mask(ZStack {
+                    Rectangle().scaleEffect(y: 0.4, anchor: .top)
+                    Ellipse().scaleEffect(x: 1.2, y: 0.7).offset(y: pressed ? 2 : -7)
+                })
                 .clipShape(shape)
                 .blendMode(.screen)
 
@@ -328,9 +345,11 @@ public struct PagerKeyRow: View {
         ZStack(alignment: .bottomLeading) {
             Color.clear
 
+            // Lifted 3pt off its traced position: the leaf as traced sits a
+            // hair too deep in the case's bottom edge.
             rocker
                 .frame(width: s(rockerBounds.width), height: s(rockerBounds.height))
-                .offset(x: s(rockerBounds.minX), y: -s(bottomMargin(of: rockerBounds)))
+                .offset(x: s(rockerBounds.minX), y: -s(bottomMargin(of: rockerBounds)) - 3)
 
             sendKey
                 .frame(width: s(sendBounds.width), height: s(sendBounds.height))
@@ -345,12 +364,9 @@ public struct PagerKeyRow: View {
 
     private var rocker: some View {
         ZStack {
-            // The recess the leaf sits in. Pure decoration — hit-testable it
-            // would swallow drags on the case in the halo around the keys.
-            PagerOutlines.rockerLeaf
-                .fill(Color.black.opacity(0.30))
-                .scaleEffect(1.08)
-                .allowsHitTesting(false)
+            // No dark recess around the leaf — it sits in the faceplate's own
+            // black region, so an extra halo just read as a smudge. The thin
+            // edge stroke is all the separation it needs.
             PagerOutlines.rockerLeaf
                 .stroke(keyEdge.opacity(0.9), lineWidth: 1)
 

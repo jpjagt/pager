@@ -68,11 +68,11 @@ public struct CasePalette {
     }
 }
 
-/// One of the two molded-plastic case colors a pager can take.
+/// One of the three molded-plastic case colors a pager can take.
 /// `.darkGrey` is the primary case and default (see `AppearancePrefs.caseColor`);
-/// `.beige` is secondary.
+/// `.beige` and `.white` are secondary.
 public enum CaseColor: String, Codable, CaseIterable {
-    case darkGrey, beige
+    case darkGrey, beige, white
 
     /// The palette is total — every case resolves to a complete set of hex
     /// values, no optionals.
@@ -80,10 +80,10 @@ public enum CaseColor: String, Codable, CaseIterable {
         switch self {
         case .darkGrey:
             return CasePalette(
-                shellTop: "#6B6E73", shellBottom: "#3A3C40",
-                edgeHighlight: "#B7BBC0", edgeShadow: "#1C1D1F",
+                shellTop: "#4D4F53", shellBottom: "#26272A",
+                edgeHighlight: "#9CA0A6", edgeShadow: "#0F1012",
                 faceplateTop: "#2A2C30", faceplateBottom: "#0B0C0E", faceplateEdge: "#494D53",
-                keyTop: "#7A7D82", keyBottom: "#4A4D52", keyEdge: "#232427", keyGlyph: "#F2F4F6",
+                keyTop: "#2F3134", keyBottom: "#111214", keyEdge: "#0A0B0C", keyGlyph: "#F2F4F6",
                 sendTop: "#5FBF56", sendBottom: "#2E7D32", sendGlyph: "#FFFFFF",
                 closeTop: "#E5544D", closeBottom: "#A31D18", closeGlyph: "#FFFFFF",
                 wordmark: "#C7CBD1"
@@ -97,6 +97,19 @@ public enum CaseColor: String, Codable, CaseIterable {
                 sendTop: "#5FBF56", sendBottom: "#2E7D32", sendGlyph: "#FFFFFF",
                 closeTop: "#E5544D", closeBottom: "#A31D18", closeGlyph: "#FFFFFF",
                 wordmark: "#D8CFBE"
+            )
+        case .white:
+            // The all-light case: unlike the other two, the faceplate is light
+            // plastic as well (#E9E9E9-ish), so the wordmark prints dark-grey
+            // on it instead of light.
+            return CasePalette(
+                shellTop: "#E4E4E4", shellBottom: "#D9D9D9",
+                edgeHighlight: "#FFFFFF", edgeShadow: "#ACACAC",
+                faceplateTop: "#F9F9F9", faceplateBottom: "#F1F1F1", faceplateEdge: "#C6C6C6",
+                keyTop: "#EAEAEA", keyBottom: "#CCCCCC", keyEdge: "#A3A3A3", keyGlyph: "#5E5E5E",
+                sendTop: "#5FBF56", sendBottom: "#2E7D32", sendGlyph: "#FFFFFF",
+                closeTop: "#E5544D", closeBottom: "#A31D18", closeGlyph: "#FFFFFF",
+                wordmark: "#9E9E9E"
             )
         }
     }

@@ -119,8 +119,8 @@ final class ThemeTests: XCTestCase {
         XCTAssertEqual(ScreenColor.nextUnused(taken: [second, first, second]), expected)
     }
 
-    func testNextUnusedWrapsToGreenWhenAllSevenTaken() {
-        XCTAssertEqual(ScreenColor.allCases.count, 7)
+    func testNextUnusedWrapsToGreenWhenAllSixTaken() {
+        XCTAssertEqual(ScreenColor.allCases.count, 6)
         XCTAssertEqual(ScreenColor.nextUnused(taken: ScreenColor.allCases), .green)
     }
 

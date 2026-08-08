@@ -27,6 +27,24 @@ final class AppearancePrefsTests: XCTestCase {
         XCTAssertNil(link.windowFrame)
     }
 
+    /// `yellow` was removed from `ScreenColor`; prefs saved while it existed
+    /// must decode to orange (its nearest hue), not throw — a throw here
+    /// would wipe the user's links. Unknown future values fall back to green.
+    func testRemovedYellowScreenColorDecodesToOrange() throws {
+        let json = """
+        {"maxWidth":250,"fontSize":13,"opacity":1,"screenColor":"yellow","caseColor":"beige"}
+        """
+        let prefs = try JSONDecoder().decode(AppearancePrefs.self, from: Data(json.utf8))
+        XCTAssertEqual(prefs.screenColor, .orange)
+        XCTAssertEqual(prefs.caseColor, .beige)
+
+        let unknown = """
+        {"maxWidth":250,"fontSize":13,"opacity":1,"screenColor":"chartreuse"}
+        """
+        XCTAssertEqual(try JSONDecoder().decode(AppearancePrefs.self, from: Data(unknown.utf8)).screenColor,
+                       .green)
+    }
+
     func testAppearancePrefsNewFieldsRoundTrip() throws {
         var prefs = AppearancePrefs()
         prefs.screenColor = .pink

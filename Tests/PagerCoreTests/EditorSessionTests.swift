@@ -142,4 +142,117 @@ final class EditorSessionTests: XCTestCase {
         let fresh = EditorSession(linkId: link.id, store: store, committer: committer)
         XCTAssertEqual(fresh.draftImageData, jpeg)
     }
+
+    // MARK: - Open-fresh editing
+    //
+    // The wipe is driven from the app layer, which sees the key press before
+    // the text field does (SwiftUI ignores a shortened binding value while the
+    // field is being edited, so it cannot be done from inside `edit`). What is
+    // tested here is the state machine the key monitor drives.
+
+    func testTakeFreshEditClearsTheMessageAndRemembersIt() {
+        session.beginFreshEdit()
+        XCTAssertTrue(session.takeFreshEdit())
+        XCTAssertEqual(session.text, "")
+        XCTAssertTrue(session.canRestoreReplaced)
+    }
+
+    func testOnlyTheFirstKeystrokeWipes() {
+        session.beginFreshEdit()
+        XCTAssertTrue(session.takeFreshEdit())
+        session.edit("new message")
+        XCTAssertFalse(session.takeFreshEdit(), "the window closes after one wipe")
+        XCTAssertEqual(session.text, "new message")
+    }
+
+    func testUnarmedSessionNeverWipes() {
+        XCTAssertFalse(session.takeFreshEdit())
+        XCTAssertEqual(session.text, "hello")
+    }
+
+    func testGraceTimeoutEndsTheWindow() {
+        session.beginFreshEdit()
+        session.endFreshEdit() // the 10 s timer
+        XCTAssertFalse(session.takeFreshEdit())
+        XCTAssertEqual(session.text, "hello")
+    }
+
+    func testDeletionOrNavigationEndsTheWindowButKeepsUndo() {
+        session.beginFreshEdit()
+        session.cancelReplaceOnType() // arrow key, backspace, or a click
+        XCTAssertFalse(session.takeFreshEdit(), "typing now edits the message, it doesn't replace it")
+        XCTAssertEqual(session.text, "hello")
+    }
+
+    func testClickAfterAWipeKeepsTheUndo() {
+        session.beginFreshEdit()
+        session.takeFreshEdit()
+        session.cancelReplaceOnType()
+        XCTAssertTrue(session.canRestoreReplaced, "clicking must not cost the user the undo")
+    }
+
+    func testWipingAnEmptyMessageLeavesNothingToUndo() {
+        store.updateCachedText(id: link.id, text: "", writtenAt: 2)
+        let fresh = EditorSession(linkId: link.id, store: store, committer: committer)
+        fresh.beginFreshEdit()
+        XCTAssertFalse(fresh.takeFreshEdit(), "nothing was thrown away, so the field needn't be touched")
+        XCTAssertFalse(fresh.canRestoreReplaced)
+    }
+
+    func testUndoBringsBackTheReplacedMessage() {
+        session.beginFreshEdit()
+        session.takeFreshEdit()
+        session.edit("typed since the wipe") // undo still targets the wipe
+        XCTAssertTrue(session.restoreReplaced())
+        XCTAssertEqual(session.text, "hello")
+        XCTAssertFalse(session.canRestoreReplaced, "one restore, not a repeating toggle")
+    }
+
+    func testUndoBringsBackAReplacedImage() throws {
+        let jpeg = try ImageCodec.process(TestImageFactory.png(width: 100, height: 100))
+        store.updateCachedContent(id: link.id, content: .image(jpeg), writtenAt: 2)
+        let fresh = EditorSession(linkId: link.id, store: store, committer: committer)
+        fresh.beginFreshEdit()
+        XCTAssertTrue(fresh.takeFreshEdit())
+        XCTAssertNil(fresh.draftImageData)
+        XCTAssertTrue(fresh.restoreReplaced())
+        XCTAssertEqual(fresh.draftImageData, jpeg)
+    }
+
+    func testRestoredMessageIsCommittable() {
+        session.beginFreshEdit()
+        session.takeFreshEdit()
+        session.restoreReplaced()
+        session.commit()
+        XCTAssertEqual(committer.lastContent, .text("hello"),
+                       "restore leaves a dirty draft: sending must push the message that came back")
+    }
+
+    func testNothingToUndoWithoutAWipe() {
+        session.edit("just typing")
+        XCTAssertFalse(session.canRestoreReplaced)
+        XCTAssertFalse(session.restoreReplaced(), "false lets the text field's own undo handle ⌘Z")
+    }
+
+    func testSendingEndsTheWindow() {
+        session.beginFreshEdit()
+        session.takeFreshEdit()
+        session.edit("sent")
+        session.commit()
+        XCTAssertFalse(session.canRestoreReplaced)
+    }
+
+    func testDroppedTextEndsTheWindow() {
+        session.beginFreshEdit()
+        session.replaceText("dropped text")
+        XCTAssertEqual(session.text, "dropped text")
+        XCTAssertFalse(session.takeFreshEdit(), "a drop said what the pager holds; typing must not wipe it")
+    }
+
+    func testDroppedImageEndsTheWindow() throws {
+        session.beginFreshEdit()
+        try session.setImage(TestImageFactory.png(width: 100, height: 100))
+        XCTAssertFalse(session.takeFreshEdit(), "the image was an explicit replacement, not a silent wipe")
+        XCTAssertNotNil(session.draftImageData)
+    }
 }

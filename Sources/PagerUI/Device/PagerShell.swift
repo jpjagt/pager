@@ -74,20 +74,20 @@ public struct PagerShell<Content: View>: View {
                            startPoint: .top, endPoint: .bottom))
     }
 
-    /// A single thin stroke run around the whole perimeter, colored by an
-    /// `AngularGradient`: `edgeHighlight` peaks near the top-left, `edgeShadow`
-    /// at the bottom-right, and the two blend continuously the rest of the way
-    /// around (an angular gradient wraps its last stop back into its first).
-    /// One continuous sweep cannot produce the horizontal seam that a pair of
-    /// half-masked strokes did.
+    /// A single thin stroke run around the whole perimeter, colored by a
+    /// vertical `LinearGradient`: `edgeHighlight` across the top half,
+    /// `edgeShadow` across the bottom half — the case lit from above, mirrored
+    /// left-to-right. One stroke with one gradient, so there is neither the
+    /// horizontal seam a pair of half-masked strokes produced nor the lopsided
+    /// once-around sweep an angular gradient did.
     private var caseBevel: some View {
         PagerOutlines.outerCase.strokeBorder(
-            AngularGradient(
+            LinearGradient(
                 gradient: Gradient(stops: [
-                    .init(color: color(palette.edgeShadow), location: 0.307),
-                    .init(color: color(palette.edgeHighlight), location: 0.807),
+                    .init(color: color(palette.edgeHighlight), location: 0.12),
+                    .init(color: color(palette.edgeShadow), location: 0.88),
                 ]),
-                center: .center),
+                startPoint: .top, endPoint: .bottom),
             lineWidth: 1.5)
     }
 
@@ -112,12 +112,18 @@ public struct PagerShell<Content: View>: View {
     /// boundary is an ellipse, not the panel's own outline — that mismatch is
     /// what reads as a reflection rather than a border).
     private var faceplate: some View {
-        ZStack {
+        // The recess shadow is tuned per material: the glossy black faceplates
+        // need a heavy inner shadow to read as sunk at all, but that same
+        // shadow on the white case's light faceplate reads as grime around the
+        // rim. Light plates keep the recess with a fraction of the weight.
+        let light = faceplateIsLight
+        return ZStack {
             PagerOutlines.faceplate.fill(
                 LinearGradient(colors: [color(palette.faceplateTop), color(palette.faceplateBottom)],
                                startPoint: .top, endPoint: .bottom)
-                    .shadow(.inner(color: .black.opacity(0.75), radius: 6, y: 4))
-                    .shadow(.inner(color: .white.opacity(0.10), radius: 2, y: -1)))
+                    .shadow(.inner(color: .black.opacity(light ? 0.14 : 0.75),
+                                   radius: light ? 3 : 6, y: light ? 2 : 4))
+                    .shadow(.inner(color: .white.opacity(light ? 0.60 : 0.10), radius: 2, y: -1)))
 
             LinearGradient(
                 stops: [
@@ -185,12 +191,22 @@ public struct PagerShell<Content: View>: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
     }
 
+    /// Whether the palette's faceplate is light plastic rather than glossy
+    /// black — derived from the color itself instead of a palette flag, so a
+    /// future case theme gets the right recess weight for free.
+    private var faceplateIsLight: Bool {
+        guard let ns = TextUtil.color(fromHex: palette.faceplateTop)?
+            .usingColorSpace(.sRGB) else { return false }
+        let luminance = 0.299 * ns.redComponent + 0.587 * ns.greenComponent + 0.114 * ns.blueComponent
+        return luminance > 0.6
+    }
+
     private func color(_ hex: String) -> Color {
         Color(nsColor: TextUtil.color(fromHex: hex) ?? .gray)
     }
 }
 
-/// The `LIMINAL` wordmark, **printed** on the faceplate rather than debossed
+/// The `liminal` wordmark, **printed** on the faceplate rather than debossed
 /// into the case — the reference device prints its brand light on the glossy
 /// black panel, and a deboss reads as moulded plastic, which the faceplate
 /// isn't. One flat pass of `palette.wordmark`, no offset copies.
@@ -199,9 +215,8 @@ struct Wordmark: View {
     let scale: CGFloat
 
     var body: some View {
-        Text("LIMINAL")
-            .font(.system(size: 10 * scale / 0.742, weight: .medium, design: .rounded))
-            .tracking(2.4 * scale / 0.742)
+        Text("liminal")
+            .font(.system(size: 10 * scale / 0.742, weight: .medium, design: .rounded).italic())
             .foregroundColor(color(palette.wordmark))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(false)

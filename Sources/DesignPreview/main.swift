@@ -13,7 +13,7 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
-let knownStates = ["empty", "long", "image", "offline", "update"]
+let knownStates = ["empty", "long", "image", "offline", "update", "drop", "drop-long"]
 
 struct Options {
     var caseColor: CaseColor = .darkGrey
@@ -129,6 +129,16 @@ func deviceState(forNamedState name: String, caseColor: CaseColor, screenColor: 
         return PagerDeviceState(
             screenColor: screenColor, caseColor: caseColor, text: "dinner at 7?",
             updateBannerVersion: "1.4.0")
+    // The two drop states exist to be compared against `empty`/`long` at the
+    // same palette: the drop zone is an overlay, so the device must come out
+    // exactly the same height with and without it. A drag that resized the
+    // pager would move the drop target out from under the cursor.
+    case "drop":
+        return PagerDeviceState(screenColor: screenColor, caseColor: caseColor, dropTarget: .image)
+    case "drop-long":
+        var state = deviceState(forNamedState: "long", caseColor: caseColor, screenColor: screenColor)
+        state.dropTarget = .image
+        return state
     default:
         fail("unknown state '\(name)'")
     }

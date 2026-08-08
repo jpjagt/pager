@@ -43,6 +43,10 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
     var onFrameChanged: ((CGRect) -> Void)?
     /// Fired when the window actually closes, whatever closed it.
     var onClosed: (() -> Void)?
+    /// Fired on any mouse-down inside the device. The only listener is the
+    /// open-fresh edit: a click means the user placed the caret (or grabbed the
+    /// case to drag it), so the next keystroke must not wipe the message.
+    var onMouseDown: (() -> Void)?
 
     private var persistWork: DispatchWorkItem?
     /// The dragged-to rect waiting to be written, cleared by whichever of the
@@ -99,6 +103,15 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
 
     /// Without this the text field can never take focus. See the type doc.
     override var canBecomeKey: Bool { true }
+
+    /// Observed, never intercepted: the event is always passed on. Watching it
+    /// here rather than in the SwiftUI content because the whole device — case,
+    /// keys and screen — counts as "the user clicked", and `isMovableByWindowBackground`
+    /// means most of that surface has no control to hang a gesture on.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown { onMouseDown?() }
+        super.sendEvent(event)
+    }
 
     // MARK: - Geometry
 
@@ -218,6 +231,25 @@ final class PagerWindow: NSWindow, NSWindowDelegate {
         if let editor {
             editor.selectedRange = NSRange(location: (editor.string as NSString).length, length: 0)
         }
+    }
+
+    /// Writes `text` straight into the message field, caret at the end.
+    ///
+    /// Needed because SwiftUI will not push a *shortened* binding value into a
+    /// `TextField` that is currently being edited — verified: the field editor
+    /// keeps the string the user typed and the next keystroke re-syncs the
+    /// model from it, so a wipe done through the binding silently undoes
+    /// itself. Anything that replaces the message mid-edit (the open-fresh
+    /// wipe, and the ⌘Z that puts it back) therefore has to come through here.
+    func setMessageFieldText(_ text: String) {
+        guard let field = Self.firstTextField(in: contentView) else { return }
+        let editor: NSText? = (field as? NSTextField)?.currentEditor() ?? field as? NSText
+        guard let editor else {
+            (field as? NSTextField)?.stringValue = text // not being edited yet
+            return
+        }
+        editor.string = text
+        editor.selectedRange = NSRange(location: (text as NSString).length, length: 0)
     }
 
     private static func firstTextField(in view: NSView?) -> NSView? {

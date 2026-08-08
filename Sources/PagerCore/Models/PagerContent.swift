@@ -32,6 +32,13 @@ public enum PagerContent: Equatable {
         return nil
     }
 
+    /// Nothing to show: empty text. An image is never empty — a zero-byte one
+    /// can't be produced (`ImageCodec.process` throws on undecodable data).
+    public var isEmpty: Bool {
+        if case .text(let text) = self { return text.isEmpty }
+        return false
+    }
+
     /// Plaintext size for log lines: chars for text, bytes for an image.
     public var sizeForLog: Int {
         switch self {
