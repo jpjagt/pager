@@ -22,7 +22,8 @@ to JPEG ≤ 600 KB and stored inline in the same node (`type: "img"`).
 
 ```sh
 swift build              # debug build
-swift test               # run all tests
+swift test               # run all tests (slow — prefer a filter while iterating)
+swift test --filter VoiceCoreTests          # only the voice-locket suite
 swift test --filter ShareCodeTests          # one test class/target
 swift test --filter ShareCodeTests/testRoundTrip   # one test method
 make build               # release, universal (arm64 + x86_64)
@@ -54,6 +55,11 @@ swift run design-preview --sheet --out contact-sheet.png
 # per run, DELETEs its node + temp logs after. PAGER_DATABASE_URL overrides the
 # backend (e.g. a local emulator).
 swift run e2e
+
+# The e2e run also contains a voice-locket stage that provisions two headless
+# voice devices against a live voice server and runs record→receive→play→reply.
+# It skips cleanly (one line, still PASS) unless all three are set:
+VOICE_SERVER_URL=… VOICE_CLAIM_TOKEN_A=… VOICE_CLAIM_TOKEN_B=… swift run e2e
 ```
 
 `swift test` is fully offline/deterministic (stubbed transport). The network
@@ -99,9 +105,11 @@ Use bare `make release` to re-publish the current tag without bumping.
 
 ## Architecture
 
-Six SwiftPM targets:
+Eight SwiftPM targets:
 
-- **`PagerCore`** (library) — all pure, testable logic. No AppKit. This is where the tests live and where most logic changes belong.
+- **`PagerCore`** (library) — all pure, testable logic for the pager half. No AppKit. This is where most pager logic changes belong.
+- **`VoiceCore`** (library) — all pure, testable logic for the **voice-locket** half (see the Voice lockets section below). No AppKit; depends on `PagerCore` only for `Backoff` + `SyncLogSink`.
+- **`COpus`** (C target) — vendored libopus 1.4 (`Vendor/opus`, float build, plain C paths, no arch intrinsics) plus a tiny shim for the variadic ctl API. Not a package dependency — Sparkle remains the only one.
 - **`PagerUI`** (library) — the skeuomorphic device views (`PagerDeviceView`, `PagerShell`, `LCDPanel`, `Banner`, key shapes, noise texture) rendered from a plain `PagerDeviceState`/`PagerDeviceActions` pair. No AppKit-shell types, no store/engine access — props in, callbacks out — which is what lets `DesignPreview` render any state from a literal.
 - **`Pager`** (executable) — the AppKit/SwiftUI shell. `@main` is `PagerApp` in `Sources/Pager/PagerApp.swift` (an `NSApplication` accessory app — menu-bar only, `LSUIElement`).
 - **`DecodeLog`** (executable, `decode-log`) — CLI that decrypts a submitted sync log given the share code(s).
@@ -194,6 +202,42 @@ Design: `docs/superpowers/specs/2026-06-23-sync-logging-design.md`.
 - **SwiftUI will not push a shortened value into a `TextField` that is being edited.** Verified with an isolated probe: the binding setter runs and the model updates, but the field editor keeps the user's string and the *next* keystroke re-syncs the model back from it — which reads as "my change was ignored". So anything that shrinks or replaces the message mid-edit (the fresh-edit wipe, its ⌘Z) must write through `PagerWindow.setMessageFieldText`, in AppKit, and the wipe must happen *before* the keystroke rather than in reaction to it. The 500-char cap in `PagerDeviceView.textBinding` has the same limitation; `EditorSession.edit` re-caps, so the session is never over the limit even when the field briefly is.
 - **Quitting commits, it does not discard.** A pager window can hold a draft for hours, so `applicationWillTerminate` commits every open session and then calls `SyncEngine.flushSynchronously()` — the debounced/async PUT would otherwise never leave the machine. Quit is not the ✕ key.
 
+## Voice lockets
+
+The app is also a full peer (and the reference client) for the **voice-locket**
+system — wearable pendants exchanging short spoken messages in circles of 2–3
+users. The wire contract lives outside this repo:
+`../voice-locket/protocol/PROTOCOL.md` (authoritative) and
+`../voice-locket/voice-pendant-spec.md`; this client's design doc is
+`docs/superpowers/specs/2026-08-10-voice-locket-client-design.md`. The Mac is
+an **additional device of its user** on the pendant plane: mTLS device
+certificate (Keychain), MQTT 5 signalling, HTTP-chunked audio. **Voice circles
+are not E2E-encrypted** (the server processes audio) — the add flow and
+Settings say so; Pager's E2EE promise is scoped to pagers.
+
+### VoiceCore layers
+
+- **`Wire/`** — `TxnStreamCodec` (the `VLK1` binary stream: header, frame records, end-of-message; discards resume-overlap seqs), control messages (`tx.start/end/abort`, `receipt.patch` with unknown-key preservation, `client.stats`), `JSONValue`.
+- **`Mqtt/`** — `MqttPacketCodec` (pure MQTT 5 subset), `MqttSession` (handshake, QoS 1 with dup redelivery, keepalive, reconnect + `Backoff`, surfaces CONNACK's `session present`), `NWMqttConnector` (the real mTLS byte pipe; thin, e2e-only).
+- **`Audio/`** — `OpusCodec` seam + `LibOpusCodec` (COpus-backed; 16 kHz mono, 60 ms frames, 48 kbps).
+- **`Playout/`** — `PlayoutMachine`, the pendant spec's §1.2 policy as a pure type: buffer-threshold start (500 ms on desktop), EOM-before-threshold, silent pause on underrun, rebuffer, realtime-paced pull. Chase-play and archive-play are one code path.
+- **`Identity/`** — minimal `DER` encoder → `CSRBuilder` (PKCS#10, EC P-256, openssl-verified in tests), `ProvisioningClient` (claim token → certificate + circle config; the JSON shape is this client's assumption, flagged in the design doc), `KeychainIdentityStore` (key + cert → `SecIdentity`, keyed by device id), `VoiceActions.enroll` (the whole add flow, `PagerActions` idiom).
+- **`Transport/`** — `VoiceTransport` seam + `RelayClient` (URLSession: chunked upload from an async body, streaming download, `/status`, catch-up, mTLS + private-CA trust).
+- **`Store/`** — `CircleStore` (`LinkStore` idiom; per-circle `KeyBinding` shortcut, `tx_index` cursor, CA bundle) and `MessageStore` (raw `VLK1` files + JSON index; disk-budget eviction that never touches unheard/saved/most-recent).
+- **`Engine/`** — `RecordSession` (frames buffered until acked; §5.2 resume via `/status`+`from_seq`; discard = stop without EOM, the server aborts) and `VoiceEngine` (one per circle: unheard queue in `tx_index` order, catch-up on `session present == false`, receipts, downloads, playback, the LED state). `AudioIO` is the one audio seam.
+
+### Voice invariants (don't break these)
+
+- **One `VoiceEngine`, one status item, one hotkey per circle.** Additional circles never default to a taken shortcut; `CircleStore.bind` moves a combo, never shares it.
+- **One shortcut is the whole input surface:** tap = play queue / stop; hold (>300 ms) = record, release sends. Mic capture starts at the hold threshold, never at key-down (a tap must not flash the mic indicator).
+- **Ordering is `tx_index`, never timestamps.** It is also the catch-up cursor and never rewinds.
+- **Receipts have scopes** (protocol §7.2): `delivered_at` is device-scoped and fires only after the complete stream is on disk; `heard_at`/`saved` are user-scoped — heard on any of the user's clients must drop the message from this Mac's unheard queue, and vice versa.
+- **Everything inbound is idempotent on `txn_id`** (QoS 1 duplicates are normal).
+- **Invariant #1 of the pendant spec:** capture and playback never run at once; `VoiceEngine` is the only `AudioIO` caller and stops playback before recording.
+- **The LED is silent.** State changes appear only in the menu bar icon — no sounds, no notifications, no blinking. (The between-messages separator tone plays *inside* an already-running playback and is allowed.)
+- **Quitting sends:** `applicationWillTerminate` → `VoiceEngine.flushSynchronously()` re-POSTs the full body on a detached task (the normal upload pump lives on the main actor, which a blocking flush would deadlock — same trap as `SyncEngine`).
+- **Discard is the only cancel, and it is silence:** no EOM is sent; the server's resume window expires into `tx.abort`. The protocol has no other deletion.
+
 ## Testing approach
 
 Two layers, matching the core-vs-views boundary above:
@@ -206,9 +250,18 @@ Two layers, matching the core-vs-views boundary above:
   `PagerUI` logic (e.g. `NoiseTexture`) that doesn't need a live window. When
   changing sync/crypto/flow logic, add tests here rather than testing through
   the AppKit shell.
+- **Voice unit tests live in `Tests/VoiceCoreTests/`** — their own test target,
+  so `swift test --filter VoiceCoreTests` runs the voice suite alone (the full
+  suite is slow). Same style: scripted bytes for both codecs and the MQTT
+  session, fakes for transport/audio/signalling, a deterministic clock in the
+  playout tests, and the real libopus + a real `openssl req -verify` for the
+  CSR. `KeychainIdentityStore`, `NWMqttConnector` and `AVAudioIO` are the thin
+  deliberately-untested edges.
 - **Integration (`swift run e2e`)** — covers what the stubs can't: the real
   Firebase round-trip and the app-level flows across two isolated devices. Not
   part of `swift test` (needs network); run it before shipping a sync/flow change.
+  The voice stage (see Commands) additionally needs a live voice server and two
+  claim tokens, and skips cleanly without them.
 
 If a behavior can only be tested through a SwiftUI view or `NSStatusItem`, that's
-a signal the logic should move into `PagerCore` behind a seam.
+a signal the logic should move into `PagerCore` (or `VoiceCore`) behind a seam.

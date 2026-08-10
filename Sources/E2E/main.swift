@@ -170,6 +170,9 @@ enum E2E {
         print("\n  — app-level flows (two isolated devices) —")
         await Flows.run(transport: transport, dbURL: dbURL, check: check)
 
+        print("\n  — voice-locket flows (live server) —")
+        await VoiceFlows.run(check: check)
+
         await deleteNode(dbURL: dbURL, pathId: pathId)
         try? FileManager.default.removeItem(at: logDir)
         print("\n  cleaned up test node + temp logs")

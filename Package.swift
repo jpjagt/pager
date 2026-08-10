@@ -94,7 +94,7 @@ let package = Package(
                            .product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/Pager"),
         .executableTarget(name: "DecodeLog", dependencies: ["PagerCore"], path: "Sources/DecodeLog"),
-        .executableTarget(name: "E2E", dependencies: ["PagerCore"], path: "Sources/E2E"),
+        .executableTarget(name: "E2E", dependencies: ["PagerCore", "VoiceCore"], path: "Sources/E2E"),
         .executableTarget(name: "DesignPreview", dependencies: ["PagerUI"], path: "Sources/DesignPreview"),
         .testTarget(name: "PagerCoreTests", dependencies: ["PagerCore"], path: "Tests/PagerCoreTests"),
         .testTarget(name: "VoiceCoreTests", dependencies: ["VoiceCore"], path: "Tests/VoiceCoreTests"),
