@@ -144,15 +144,18 @@ public enum ControlWire {
     }
 
     /// Decodes one inbound `dl` message. Throws only on malformed JSON or a
-    /// missing envelope; anything merely unfamiliar becomes `.unknown`.
+    /// missing `type`; anything merely unfamiliar becomes `.unknown`. A
+    /// missing `v` defaults to 1 — the published schemas don't require it.
     public static func decode(_ data: Data) throws -> ControlMessage {
         let decoder = JSONDecoder()
         let probe = try decoder.decode(Probe.self, from: data)
-        guard let type = probe.type, probe.v != nil else {
+        guard let type = probe.type else {
             throw DecodingError.dataCorrupted(.init(
-                codingPath: [], debugDescription: "missing v/type envelope"))
+                codingPath: [], debugDescription: "missing type"))
         }
-        guard probe.v == VoiceConfig.protocolVersion else { return .unknown(type: type) }
+        guard (probe.v ?? VoiceConfig.protocolVersion) == VoiceConfig.protocolVersion else {
+            return .unknown(type: type)
+        }
         switch type {
         case "tx.start": return .txStart(try decoder.decode(TxStart.self, from: data))
         case "tx.end": return .txEnd(try decoder.decode(TxEnd.self, from: data))

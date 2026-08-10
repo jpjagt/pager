@@ -38,8 +38,15 @@ final class ControlMessageTests: XCTestCase {
         XCTAssertEqual(message, .unknown(type: "tx.start"))
     }
 
-    func testMissingEnvelopeThrows() {
+    func testMissingTypeThrows() {
         XCTAssertThrowsError(try ControlWire.decode(Data(#"{ "txn_id": "x" }"#.utf8)))
+    }
+
+    func testMissingVDefaultsToCurrentVersion() throws {
+        // The schemas mark `v` optional-with-default; leniency is required.
+        let message = try ControlWire.decode(Data(
+            #"{ "type": "tx.end", "txn_id": "a", "duration_ms": 100 }"#.utf8))
+        XCTAssertEqual(message, .txEnd(TxEnd(txnId: "a", durationMs: 100)))
     }
 
     func testReceiptPatchPreservesUnknownKeysAndNull() throws {
