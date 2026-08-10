@@ -95,44 +95,4 @@ final class IdentityTests: XCTestCase {
         XCTAssertTrue(id.dropFirst(4).allSatisfy { "0123456789abcdef".contains($0) })
     }
 
-    func testProvisioningRoundTrip() async throws {
-        let response: [String: Any] = [
-            "device_id": "vpd-3fa2c81b",
-            "user_id": "usr-a41f09c2",
-            "certificate": Data([0x30, 0x82]).base64EncodedString(),
-            "ca_bundle": [Data([0x30, 0x81]).base64EncodedString()],
-            "circle_id": "cir-77b0e4d9",
-            "members": [["user_id": "usr-f", "device_ids": ["vpd-f1"], "name": "Friend"]],
-            "broker_host": "broker.example",
-            "broker_port": 8883,
-            "relay_url": "https://relay.example",
-        ]
-        var captured: (URL, Data)?
-        let client = ProvisioningClient { url, body in
-            captured = (url, body)
-            return (try JSONSerialization.data(withJSONObject: response), 200)
-        }
-        let result = try await client.provision(
-            serverURL: URL(string: "https://voice.example")!,
-            claimToken: "tok", requestedDeviceId: "vpd-3fa2c81b", csr: Data([1, 2]))
-        XCTAssertEqual(captured?.0.path, "/v1/provision")
-        let sent = try XCTUnwrap(JSONSerialization.jsonObject(
-            with: captured!.1) as? [String: Any])
-        XCTAssertEqual(sent["claim_token"] as? String, "tok")
-        XCTAssertEqual(result.circleConfig().circleId, "cir-77b0e4d9")
-        XCTAssertEqual(result.circleConfig().userId(forDevice: "vpd-f1"), "usr-f")
-        XCTAssertEqual(result.caBundle.count, 1)
-    }
-
-    func testProvisioningRejectionSurfacesStatus() async {
-        let client = ProvisioningClient { _, _ in (Data(), 403) }
-        do {
-            _ = try await client.provision(
-                serverURL: URL(string: "https://voice.example")!,
-                claimToken: "bad", requestedDeviceId: "vpd-x", csr: Data())
-            XCTFail("expected rejection")
-        } catch {
-            XCTAssertEqual(error as? ProvisioningError, .rejected(status: 403))
-        }
-    }
 }

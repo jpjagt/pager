@@ -150,6 +150,31 @@ final class RelayClientTests: XCTestCase {
         XCTAssertEqual(records[1].state, "open")
     }
 
+    func testDevModeSendsClientCNHeaderEverywhere() async throws {
+        VoiceStubURLProtocol.handler = { _ in
+            .init(status: 200, chunks: [Data(#"{"state":"open","next_seq":0}"#.utf8)])
+        }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [VoiceStubURLProtocol.self]
+        let dev = RelayClient(baseURL: URL(string: "http://localhost:8080")!,
+                              devClientCN: "vpd-devaa11",
+                              configuration: configuration)
+        _ = try await dev.status(txnId: "t")
+        for try await _ in dev.download(txnId: "t2", fromSeq: 0) { break }
+        let headers = VoiceStubURLProtocol.captured.map {
+            $0.value(forHTTPHeaderField: "X-Client-CN")
+        }
+        XCTAssertEqual(headers, ["vpd-devaa11", "vpd-devaa11"])
+        // And the production client sends none.
+        VoiceStubURLProtocol.reset()
+        VoiceStubURLProtocol.handler = { _ in
+            .init(status: 200, chunks: [Data(#"{"state":"open","next_seq":0}"#.utf8)])
+        }
+        _ = try await client.status(txnId: "t3")
+        XCTAssertNil(VoiceStubURLProtocol.captured.first?
+            .value(forHTTPHeaderField: "X-Client-CN"))
+    }
+
     func testHTTPErrorSurfaces() async {
         VoiceStubURLProtocol.handler = { _ in .init(status: 503, chunks: []) }
         do {

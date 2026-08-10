@@ -30,10 +30,15 @@ public struct CircleConfig: Codable, Equatable {
     public var brokerPort: Int
     /// HTTPS relay base URL for §5.2 endpoints.
     public var relayURL: URL
+    /// Dev mode (CLIENT.md, `VLK_ENROLMENT=open`): non-nil switches both
+    /// transports from mTLS to asserted identity — this value goes out as
+    /// `X-Client-CN` on every HTTP request, and MQTT runs plaintext. nil in
+    /// production; the server strips the header there, so nothing leaks.
+    public var devClientCN: String?
 
     public init(circleId: String, deviceId: String, userId: String,
                 members: [CircleMember], brokerHost: String, brokerPort: Int = 8883,
-                relayURL: URL) {
+                relayURL: URL, devClientCN: String? = nil) {
         self.circleId = circleId
         self.deviceId = deviceId
         self.userId = userId
@@ -41,6 +46,7 @@ public struct CircleConfig: Codable, Equatable {
         self.brokerHost = brokerHost
         self.brokerPort = brokerPort
         self.relayURL = relayURL
+        self.devClientCN = devClientCN
     }
 
     /// The same-user predicate behind user-scoped receipts (§7.2): the wire

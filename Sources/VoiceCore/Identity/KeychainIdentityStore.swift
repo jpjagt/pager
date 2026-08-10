@@ -1,6 +1,19 @@
 import Foundation
 import Security
 
+/// What enrolment needs from identity storage — a seam so the flow is
+/// testable with ephemeral (non-Keychain) keys.
+public protocol IdentityStoring: Sendable {
+    func privateKey(deviceId: String) throws -> SecKey
+    func publicKeyBytes(of privateKey: SecKey) throws -> Data
+    func signer(privateKey: SecKey) -> (Data) throws -> Data
+    func storeCertificate(_ der: Data, deviceId: String) throws
+    /// Moves a key minted under a provisional tag to the granted device id.
+    func retagKey(fromDeviceId: String, toDeviceId: String)
+    func identity(deviceId: String) -> SecIdentity?
+    func removeIdentity(deviceId: String)
+}
+
 /// The device identity, Keychain-backed: a P-256 private key generated
 /// in-place (it never leaves the Mac — same property the pendant gets from
 /// its on-chip keypair) and the CA-issued certificate next to it, findable
@@ -11,7 +24,7 @@ import Security
 ///
 /// Thin by design — decisions live in callers; this file is unit-untested
 /// (it touches the real Keychain) and exercised by e2e and the app.
-public final class KeychainIdentityStore: @unchecked Sendable {
+public final class KeychainIdentityStore: IdentityStoring, @unchecked Sendable {
     private let tagPrefix: String
 
     public init(tagPrefix: String = "dev.july.pager.voice") {
@@ -112,6 +125,21 @@ public final class KeychainIdentityStore: @unchecked Sendable {
             return nil
         }
         return (item as! SecIdentity)
+    }
+
+    /// The key is generated before the server allocates the real device id
+    /// (the CSR needs it); once the id is granted, the key moves under it so
+    /// `removeIdentity` can always find the pair.
+    public func retagKey(fromDeviceId: String, toDeviceId: String) {
+        guard fromDeviceId != toDeviceId else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecAttrApplicationTag as String: keyTag(fromDeviceId),
+        ]
+        let update: [String: Any] = [
+            kSecAttrApplicationTag as String: keyTag(toDeviceId),
+        ]
+        SecItemUpdate(query as CFDictionary, update as CFDictionary)
     }
 
     /// Unlinking a circle removes its device's key and certificate.

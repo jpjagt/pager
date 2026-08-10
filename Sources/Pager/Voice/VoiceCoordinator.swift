@@ -72,14 +72,16 @@ final class VoiceCoordinator {
 
         let connector = NWMqttConnector(
             host: config.brokerHost, port: UInt16(config.brokerPort),
-            identity: identity, caCertificates: anchorsProvider)
+            identity: identity, caCertificates: anchorsProvider,
+            plaintext: config.devClientCN != nil)
         let mqtt = MqttSession(
             connector: connector, clientId: config.deviceId,
             subscribeTopic: "v1/dev/\(config.deviceId)/dl",
             publishTopic: "v1/dev/\(config.deviceId)/up",
             log: log)
         let relay = RelayClient(baseURL: config.relayURL,
-                                identity: identity, anchors: anchorsProvider)
+                                identity: identity, anchors: anchorsProvider,
+                                devClientCN: config.devClientCN)
         guard let codec = try? LibOpusCodec() else { return }
         let engine = VoiceEngine(
             circleId: circle.id, config: config, signal: mqtt, transport: relay,

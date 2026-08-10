@@ -12,6 +12,9 @@ struct AddCircleView: View {
 
     @State private var serverURL = ""
     @State private var claimToken = ""
+    @State private var caFingerprint = ""
+    @State private var devMode = false
+    @State private var devCircleId = ""
     @State private var busy = false
     @State private var errorText: String?
     @State private var enrolled: VoiceCircle?
@@ -31,18 +34,34 @@ struct AddCircleView: View {
         .frame(width: 420)
     }
 
+    private var canSubmit: Bool {
+        guard !busy, !serverURL.isEmpty else { return false }
+        return devMode ? !devCircleId.isEmpty : !claimToken.isEmpty && !caFingerprint.isEmpty
+    }
+
     private var enrollSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("join a voice circle as a new device of your account. "
-                + "mint a claim token from your account and paste it here.")
+            Text("join a voice circle as a new device of your account. paste the "
+                + "server, claim token and CA fingerprint you were given — they "
+                + "belong together.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             TextField("server, e.g. https://voice.example.com", text: $serverURL)
                 .textFieldStyle(.roundedBorder)
-            TextField("claim token", text: $claimToken)
-                .textFieldStyle(.roundedBorder)
+            if devMode {
+                TextField("circle id, e.g. cir-77b0e4d9", text: $devCircleId)
+                    .textFieldStyle(.roundedBorder)
+            } else {
+                TextField("claim token", text: $claimToken)
+                    .textFieldStyle(.roundedBorder)
+                TextField("CA fingerprint (SHA-256, hex)", text: $caFingerprint)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.caption, design: .monospaced))
+            }
+            Toggle("dev server (open enrolment, no certificates)", isOn: $devMode)
+                .font(.caption)
 
             Text("voice circles are not end-to-end encrypted; the server processes audio. "
                 + "(pagers stay E2E-encrypted as always.)")
@@ -52,6 +71,7 @@ struct AddCircleView: View {
 
             if let errorText {
                 Text(errorText).font(.caption).foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack {
@@ -59,7 +79,7 @@ struct AddCircleView: View {
                 Button("cancel") { onDone?() }
                 Button(busy ? "joining…" : "join circle") { enroll() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(busy || claimToken.isEmpty || serverURL.isEmpty)
+                    .disabled(!canSubmit)
             }
         }
     }
@@ -97,13 +117,23 @@ struct AddCircleView: View {
         Task { @MainActor in
             defer { busy = false }
             do {
-                enrolled = try await VoiceActions.enroll(
-                    serverURL: serverURL, claimToken: claimToken,
-                    circles: circles, identityStore: identityStore)
+                enrolled = devMode
+                    ? try await VoiceActions.enrollDev(
+                        serverURL: serverURL, circleId: devCircleId, circles: circles)
+                    : try await VoiceActions.enroll(
+                        serverURL: serverURL, claimToken: claimToken,
+                        caFingerprint: caFingerprint,
+                        circles: circles, identityStore: identityStore)
             } catch VoiceActions.EnrollError.badServerURL {
                 errorText = "that server URL doesn't look right."
+            } catch VoiceActions.EnrollError.fingerprintMismatch(_, let actual) {
+                errorText = "the server's CA does not match that fingerprint — wrong "
+                    + "server, or someone in the middle. your token was NOT sent. "
+                    + "(server offered \(String(actual.prefix(16)))…)"
             } catch ProvisioningError.rejected(let status) {
-                errorText = "the server refused the claim token (\(status))."
+                errorText = status == 400
+                    ? "the server rejected the request (400) — the token is still valid, try again."
+                    : "the server refused the claim token (\(status)) — invalid, expired, or already used."
             } catch {
                 errorText = "couldn't reach the server. check the URL and try again."
             }

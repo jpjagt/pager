@@ -10,17 +10,29 @@ public final class NWMqttConnector: MqttConnector {
     private let port: UInt16
     private let identity: @Sendable () -> SecIdentity?
     private let caCertificates: @Sendable () -> [SecCertificate]
+    /// Dev mode (CLIENT.md): the open-enrolment testbed's broker runs
+    /// plaintext with no credentials. Never true in production.
+    private let plaintext: Bool
 
     public init(host: String, port: UInt16,
                 identity: @escaping @Sendable () -> SecIdentity?,
-                caCertificates: @escaping @Sendable () -> [SecCertificate] = { [] }) {
+                caCertificates: @escaping @Sendable () -> [SecCertificate] = { [] },
+                plaintext: Bool = false) {
         self.host = host
         self.port = port
         self.identity = identity
         self.caCertificates = caCertificates
+        self.plaintext = plaintext
     }
 
     public func connect() async throws -> MqttByteConnection {
+        if plaintext {
+            let connection = NWConnection(
+                host: NWEndpoint.Host(host),
+                port: NWEndpoint.Port(rawValue: port) ?? 1883,
+                using: .tcp)
+            return try await NWByteConnection.open(connection)
+        }
         let tls = NWProtocolTLS.Options()
         let options = tls.securityProtocolOptions
         sec_protocol_options_set_min_tls_protocol_version(options, .TLSv13)

@@ -58,8 +58,11 @@ swift run e2e
 
 # The e2e run also contains a voice-locket stage that provisions two headless
 # voice devices against a live voice server and runs record→receive→play→reply.
-# It skips cleanly (one line, still PASS) unless all three are set:
-VOICE_SERVER_URL=… VOICE_CLAIM_TOKEN_A=… VOICE_CLAIM_TOKEN_B=… swift run e2e
+# It skips cleanly (one line, still PASS) unless gated in. Two gates:
+#   dev testbed (VLK_ENROLMENT=open — open provisioning, plaintext broker):
+VOICE_SERVER_URL=http://localhost:8080 VOICE_DEV=1 swift run e2e
+#   production enrolment (claim tokens + the CA fingerprint, per CLIENT.md):
+VOICE_SERVER_URL=… VOICE_CLAIM_TOKEN_A=… VOICE_CLAIM_TOKEN_B=… VOICE_CA_FINGERPRINT=… swift run e2e
 ```
 
 `swift test` is fully offline/deterministic (stubbed transport). The network
@@ -221,7 +224,7 @@ Settings say so; Pager's E2EE promise is scoped to pagers.
 - **`Mqtt/`** — `MqttPacketCodec` (pure MQTT 5 subset), `MqttSession` (handshake, QoS 1 with dup redelivery, keepalive, reconnect + `Backoff`, surfaces CONNACK's `session present`), `NWMqttConnector` (the real mTLS byte pipe; thin, e2e-only).
 - **`Audio/`** — `OpusCodec` seam + `LibOpusCodec` (COpus-backed; 16 kHz mono, 60 ms frames, 48 kbps).
 - **`Playout/`** — `PlayoutMachine`, the pendant spec's §1.2 policy as a pure type: buffer-threshold start (500 ms on desktop), EOM-before-threshold, silent pause on underrun, rebuffer, realtime-paced pull. Chase-play and archive-play are one code path.
-- **`Identity/`** — minimal `DER` encoder → `CSRBuilder` (PKCS#10, EC P-256, openssl-verified in tests), `ProvisioningClient` (claim token → certificate + circle config; the JSON shape is this client's assumption, flagged in the design doc), `KeychainIdentityStore` (key + cert → `SecIdentity`, keyed by device id), `VoiceActions.enroll` (the whole add flow, `PagerActions` idiom).
+- **`Identity/`** — minimal `DER` encoder → `CSRBuilder` (PKCS#10, EC P-256, openssl-verified in tests; the CN is a **placeholder** — the CA assigns identity), `PEM` (armor/de-armor, bundle split, SHA-256 CA fingerprints), `ProvisioningClient` (`GET /v1/ca` with accept-any trust + `POST /v1/provision {claim_token, csr}` over CA-pinned trust, per `../voice-locket/protocol/CLIENT.md`), `KeychainIdentityStore` (key + cert → `SecIdentity`; key re-tagged to the granted device id), `VoiceActions.enroll`/`enrollDev` (the add flows, `PagerActions` idiom — the fingerprint gate aborts **before the token is ever sent**).
 - **`Transport/`** — `VoiceTransport` seam + `RelayClient` (URLSession: chunked upload from an async body, streaming download, `/status`, catch-up, mTLS + private-CA trust).
 - **`Store/`** — `CircleStore` (`LinkStore` idiom; per-circle `KeyBinding` shortcut, `tx_index` cursor, CA bundle) and `MessageStore` (raw `VLK1` files + JSON index; disk-budget eviction that never touches unheard/saved/most-recent).
 - **`Engine/`** — `RecordSession` (frames buffered until acked; §5.2 resume via `/status`+`from_seq`; discard = stop without EOM, the server aborts) and `VoiceEngine` (one per circle: unheard queue in `tx_index` order, catch-up on `session present == false`, receipts, downloads, playback, the LED state). `AudioIO` is the one audio seam.
@@ -237,6 +240,7 @@ Settings say so; Pager's E2EE promise is scoped to pagers.
 - **The LED is silent.** State changes appear only in the menu bar icon — no sounds, no notifications, no blinking. (The between-messages separator tone plays *inside* an already-running playback and is allowed.)
 - **Quitting sends:** `applicationWillTerminate` → `VoiceEngine.flushSynchronously()` re-POSTs the full body on a detached task (the normal upload pump lives on the main actor, which a blocking flush would deadlock — same trap as `SyncEngine`).
 - **Discard is the only cancel, and it is silence:** no EOM is sent; the server's resume window expires into `tx.abort`. The protocol has no other deletion.
+- **Dev mode is a config value, not a build.** `CircleConfig.devClientCN` non-nil (open-enrolment testbeds only) switches `RelayClient` to `X-Client-CN` header identity and the MQTT connector to plaintext; nil means mTLS everywhere. Wire semantics are identical in both modes.
 
 ## Testing approach
 

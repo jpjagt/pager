@@ -2,14 +2,17 @@ import Foundation
 import VoiceCore
 
 /// Live voice-locket flows against a real server — the §3.3 reference-client
-/// job. Gated on environment because the voice server may not exist where
+/// job. Two gates, because the voice server may not exist where
 /// `swift run e2e` runs for pager changes:
 ///
-///   VOICE_SERVER_URL      base URL of the provisioning/relay server
-///   VOICE_CLAIM_TOKEN_A   claim token for device A (user A)
-///   VOICE_CLAIM_TOKEN_B   claim token for device B (user B, same circle)
+///   dev mode (VLK_ENROLMENT=open testbed):
+///     VOICE_SERVER_URL + VOICE_DEV=1 — open provisioning, self-picked ids,
+///     fresh throwaway circle, X-Client-CN identity, plaintext broker.
+///   production mode:
+///     VOICE_SERVER_URL + VOICE_CLAIM_TOKEN_A + VOICE_CLAIM_TOKEN_B
+///     + VOICE_CA_FINGERPRINT — the full CLIENT.md enrolment.
 ///
-/// Unset → the stage prints one skip line and passes.
+/// Neither set → the stage prints one skip line and passes.
 @MainActor
 enum VoiceFlows {
     /// Headless audio: capture synthesizes sine frames at frame cadence;
@@ -78,10 +81,19 @@ enum VoiceFlows {
             identityStore = KeychainIdentityStore(tagPrefix: "dev.july.pager.voice.e2e")
         }
 
-        func join(serverURL: String, claimToken: String) async throws -> VoiceCircle {
-            let circle = try await VoiceActions.enroll(
-                serverURL: serverURL, claimToken: claimToken,
-                circles: circles, identityStore: identityStore)
+        func join(serverURL: String, claimToken: String?, caFingerprint: String?,
+                  devCircleId: String?, userId: String?) async throws -> VoiceCircle {
+            let circle: VoiceCircle
+            if let devCircleId {
+                circle = try await VoiceActions.enrollDev(
+                    serverURL: serverURL, circleId: devCircleId, userId: userId,
+                    circles: circles)
+            } else {
+                circle = try await VoiceActions.enroll(
+                    serverURL: serverURL, claimToken: claimToken ?? "",
+                    caFingerprint: caFingerprint ?? "",
+                    circles: circles, identityStore: identityStore)
+            }
             let config = circle.config
             let identity: @Sendable () -> SecIdentity? = { [identityStore] in
                 identityStore.identity(deviceId: config.deviceId)
@@ -93,12 +105,14 @@ enum VoiceFlows {
                 connector: NWMqttConnector(host: config.brokerHost,
                                            port: UInt16(config.brokerPort),
                                            identity: identity,
-                                           caCertificates: { anchors }),
+                                           caCertificates: { anchors },
+                                           plaintext: config.devClientCN != nil),
                 clientId: config.deviceId,
                 subscribeTopic: "v1/dev/\(config.deviceId)/dl",
                 publishTopic: "v1/dev/\(config.deviceId)/up")
             let relay = RelayClient(baseURL: config.relayURL,
-                                    identity: identity, anchors: { anchors })
+                                    identity: identity, anchors: { anchors },
+                                    devClientCN: config.devClientCN)
             engine = VoiceEngine(
                 circleId: circle.id, config: config, signal: mqtt, transport: relay,
                 codec: try LibOpusCodec(), audio: audio, messages: messages,
@@ -119,13 +133,22 @@ enum VoiceFlows {
 
     static func run(check: (String, Bool) -> Void) async {
         let env = ProcessInfo.processInfo.environment
-        guard let server = env["VOICE_SERVER_URL"],
-              let tokenA = env["VOICE_CLAIM_TOKEN_A"],
-              let tokenB = env["VOICE_CLAIM_TOKEN_B"] else {
-            print("  · skipped — set VOICE_SERVER_URL, VOICE_CLAIM_TOKEN_A, "
-                + "VOICE_CLAIM_TOKEN_B to run the voice stage")
+        guard let server = env["VOICE_SERVER_URL"] else {
+            print("  · skipped — set VOICE_SERVER_URL (+ VOICE_DEV=1, or claim "
+                + "tokens + VOICE_CA_FINGERPRINT) to run the voice stage")
             return
         }
+        let devMode = env["VOICE_DEV"] == "1"
+        let tokenA = env["VOICE_CLAIM_TOKEN_A"]
+        let tokenB = env["VOICE_CLAIM_TOKEN_B"]
+        let fingerprint = env["VOICE_CA_FINGERPRINT"]
+        guard devMode || (tokenA != nil && tokenB != nil && fingerprint != nil) else {
+            print("  · skipped — set VOICE_DEV=1 (open testbed) or "
+                + "VOICE_CLAIM_TOKEN_A/_B + VOICE_CA_FINGERPRINT")
+            return
+        }
+        // Dev mode: a fresh throwaway circle per run, two distinct users.
+        let devCircle = devMode ? "cir-e2e-" + String(UUID().uuidString.prefix(8)).lowercased() : nil
 
         let a = VoiceDevice(name: "A")
         let b = VoiceDevice(name: "B")
@@ -135,8 +158,12 @@ enum VoiceFlows {
         }
 
         do {
-            let circleA = try await a.join(serverURL: server, claimToken: tokenA)
-            let circleB = try await b.join(serverURL: server, claimToken: tokenB)
+            let circleA = try await a.join(serverURL: server, claimToken: tokenA,
+                                           caFingerprint: fingerprint,
+                                           devCircleId: devCircle, userId: "usr-e2e-a")
+            let circleB = try await b.join(serverURL: server, claimToken: tokenB,
+                                           caFingerprint: fingerprint,
+                                           devCircleId: devCircle, userId: "usr-e2e-b")
             check("both devices provision into one circle",
                   circleA.config.circleId == circleB.config.circleId)
         } catch {
