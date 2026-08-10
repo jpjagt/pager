@@ -182,6 +182,7 @@ public final class VoiceEngine {
     }
 
     public var isRecording: Bool { record?.state == .recording }
+    public var isPlaying: Bool { playback != nil }
     public var recordingDurationMs: Int { record?.durationMs ?? 0 }
     public var unheardCount: Int {
         messages.index(circleId: circleId).filter { !$0.heard }.count

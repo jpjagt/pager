@@ -100,7 +100,7 @@ final class VoiceCoordinator {
             let circle = self?.circles.circles.first { $0.id == circleId }
             return (nickname: circle?.nickname ?? "locket",
                     unheard: engine?.unheardCount ?? 0,
-                    playing: false, // the menu closes on click anyway; play/stop share a verb
+                    playing: engine?.isPlaying ?? false,
                     recording: engine?.isRecording ?? false,
                     shortcut: circle?.shortcut)
         }
