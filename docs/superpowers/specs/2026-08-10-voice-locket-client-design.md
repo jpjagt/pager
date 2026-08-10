@@ -184,8 +184,11 @@ tint so state colors stay universal. v1 ships neutral rings.
 
 ### 4.2 One shortcut per circle — hold to record, tap to play
 
-Default **⌘⌥R** for the first circle; each circle's shortcut is configurable in
-Settings via a key-capture field.
+Default **⌘⌥R** for the first circle only. Additional circles never default to an
+already-taken shortcut: they start unbound, and the add flow ends with the
+key-capture field so a new circle leaves setup with its own shortcut. Every
+circle's shortcut stays editable in Settings; binding a combo that another circle
+holds moves it, with a note, rather than silently double-binding.
 
 | Gesture | Action |
 |---|---|
