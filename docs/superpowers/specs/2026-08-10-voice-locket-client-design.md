@@ -16,6 +16,13 @@ also serves as the **reference client** the pendant spec asks for (spec §3.3) �
 protocol and buffering bug gets found here, cheaply, before firmware exists. The
 server is assumed implemented.
 
+**Where the Mac sits in the user model** (protocol §2): circles are groups of
+*users*; a user owns multiple clients. The Mac client is an **additional device of
+its user**, provisioned on the pendant plane with its own certificate via a claim
+token minted by the user's account (protocol §8). It deliberately does *not* use
+the "companion client" account-auth plane — that API surface is unspecified, and
+the pendant plane is the one this client exists to exercise.
+
 **No new windows, no skeuomorphic chrome.** The entire device is a menu bar item (an
 LED in a ring) plus one global keyboard shortcut per circle. Hold the shortcut to
 record; tap it to play. This is the pendant's own interaction grammar (spec §1.1),
@@ -123,6 +130,17 @@ join via `from_seq`.
   stream is on disk, `heard_at` when first playback completes. Catch-up:
   `GET /v1/transmissions?after_index=N` bootstraps a fresh device (`N=0`) and
   reconciles an expired broker session.
+
+  **Receipt scopes** (protocol §7.2): `delivered_at` is device-scoped;
+  `heard_at`/`saved` are user-scoped. The engine MUST apply incoming
+  `receipt.patch` messages concerning its own user: a transmission the user heard
+  on another client (their pendant) leaves the Mac's unheard queue, and the LED
+  returns to idle — and hearing on the Mac clears the pendant, symmetrically. The
+  echoed patch is annotated with the originating `device_id`, so "is that my
+  user?" needs a device→user mapping from circle config; that mapping's wire
+  shape is an open protocol question (§8 below). The engine keeps the decision
+  behind a same-user predicate fed by circle config, so the gap is one function
+  wide.
 - **`RecordSession`** — mic PCM in → Opus frames out → chunked `POST` while
   recording, end-of-message on stop. Frames also buffer locally, so upload starts
   whenever the connection is ready — capture never waits on the network (the
@@ -245,7 +263,9 @@ pagers' "quitting commits".
 
 Two layers, matching the existing boundary:
 
-- **Unit (`swift test`, `Tests/VoiceCoreTests/`)** — offline, deterministic:
+- **Unit (`swift test --filter VoiceCoreTests`, `Tests/VoiceCoreTests/`)** — a
+  separate test target, so the voice suite runs alone without the (slow) full
+  pager suite. Offline, deterministic:
   `MqttPacketCodec` and `TxnStreamCodec` round-trips and malformed input, the ASN.1
   CSR encoder against known-good DER, the playout machine under scripted arrival
   timing (underrun, EOM-before-threshold, mid-stream join, resume overlap
@@ -270,7 +290,12 @@ Two layers, matching the existing boundary:
 
 ## 8. Open questions
 
-- Claim-token issuance flow for non-factory clients (shared with protocol §10).
+- Claim-token issuance flow for non-factory clients (shared with protocol §10);
+  now anchored to the user's account per protocol §8, but the issuance UX/API is
+  still unspecified.
+- The member-list shape in circle config: user-scoped receipts require mapping an
+  echoed patch's `device_id` to a user, so the config must carry each member's
+  devices. Assumed here; needs a protocol minor to pin down.
 - Whether `N_start = 500 ms` is right on desktop — `client.stats` will tell.
 - Multiple circles per Mac is assumed to work (one status item + engine + identity
   per circle, each its own provisioned device). The *pendant* multi-circle
