@@ -60,18 +60,53 @@ Sparkle remains the only package dependency.
 
 ## 3. VoiceCore modules
 
-### 3.1 `Identity/` — provisioning and mTLS
+### 3.1 `Identity/` — enrolment and mTLS (per CLIENT.md)
 
-- Keypair generated via SecKey, private key stored in the Keychain; it never leaves
-  the machine.
-- A hand-built **PKCS#10 CSR** (small ASN.1 DER encoder, ~200 lines, pure and
-  testable — no OpenSSL).
-- Provisioning client: `POST /v1/provision` with a pasted **claim token** (protocol
-  §8). The response (certificate, CA bundle, endpoints, circle config) persists via
-  `CircleStore`; the certificate is stored as a `SecIdentity` for both TLS stacks.
-- Open dependency: the provisioning service must issue claim tokens outside the
-  USB-serial factory flow. Protocol §10 already lists this as open; the Mac client is
-  its first consumer.
+Enrolment follows `../voice-locket/protocol/CLIENT.md` exactly. The out-of-band
+bundle is **three values**: server URL, one-time claim token (24 h expiry,
+pre-bound to a user, circle, and a pre-allocated `device_id`), and the **CA
+fingerprint** (SHA-256 over the CA certificate's DER, hex).
+
+1. **Fetch the CA**: `GET /v1/ca` with *no* client certificate and
+   **accept-any server trust** — the server cert is private-CA-signed, so
+   system trust cannot verify it; authenticity comes from the next step, not
+   from TLS. (Mirrors the reference client's `verify=False` bootstrap.)
+2. **Fingerprint check**: SHA-256 of the returned CA cert's DER must equal the
+   out-of-band value (case/colon-insensitive). **On mismatch, abort without
+   ever sending the token** — wrong server or interceptor.
+3. **Keypair**: EC P-256 via SecKey, Keychain-resident; the private key never
+   leaves the machine. Generated under a provisional tag and **re-tagged to
+   the granted `device_id` after provisioning** (`SecItemUpdate`) so unlink
+   can always find it.
+4. **CSR**: the existing hand-built PKCS#10 (DER), now **PEM-armored**, with a
+   **placeholder CN** — the CA overrides it with the token's pre-allocated id;
+   a client cannot choose its own identity. (The old flow minted a `device_id`
+   client-side and sent it; that survives only in dev mode, §3.1b.)
+5. **Provision**: `POST /v1/provision {"claim_token", "csr": "<PEM>"}` over a
+   connection that verifies the server **against the fetched CA only**.
+   `403` = invalid/expired/used token; `400` = malformed CSR (token not
+   consumed — retry is safe).
+6. **Store the bundle**: `cert` (PEM) and `ca` (PEM, possibly multi-cert) are
+   decoded to DER (a `PEM` helper: armor/de-armor + bundle split); the cert
+   lands in the Keychain (→ `SecIdentity`), the CA DERs and the config
+   (`device_id`, `user_id`, `circle_id`, `members: [{user_id, devices}]`,
+   `endpoints.relay`, `endpoints.mqtt.host/port`) persist via `CircleStore`.
+   Endpoints always come from the bundle, never hardcoded. Certificates live
+   10 years; there is no rotation — a replacement device is a new enrolment.
+
+### 3.1b Dev mode (`VLK_ENROLMENT=open`)
+
+Against the local testbed the certificate story disappears, and the client
+must follow: open provisioning
+(`POST /v1/provision {"device_id", "circle_id", "user_id"?}` with self-picked
+ids), identity asserted via an `X-Client-CN: <device_id>` header on every HTTP
+request, plaintext MQTT with no credentials. Carried as
+`CircleConfig.devClientCN: String?` — nil means mTLS; non-nil switches
+`RelayClient` to header identity and `NWMqttConnector` to plaintext. Wire
+semantics are identical by construction (production nginx strips inbound
+`X-Client-CN`, so nothing built against dev mode leaks into the trust model).
+The add-circle UI exposes this behind a "dev server" toggle; e2e uses it
+headlessly.
 
 ### 3.2 `Mqtt/` — minimal MQTT 5 client
 
@@ -97,7 +132,9 @@ Sparkle remains the only package dependency.
 - **Control messages** — `tx.start` / `tx.end` / `tx.abort` / `receipt.patch` /
   `client.stats` as Codable types that **preserve unknown keys** (receipts
   round-trip keys this client does not understand, per protocol §7.2). All handlers
-  are idempotent on `txn_id`.
+  are idempotent on `txn_id`. Decoding matches the published JSON Schemas
+  (`protocol/schemas/`): a missing `v` defaults to 1 (the schemas don't require
+  it); a present-but-different major still decodes to `.unknown`.
 
 ### 3.4 `Playout/` — the §1.2 state machine
 
@@ -233,11 +270,14 @@ steal Esc from every app), circle name and members, the shortcut hint, and
 
 ### 4.4 Add flow and Settings
 
-"Add voice locket…" beside the pager create/join entry points: paste a claim token
-(+ server host if not baked into `VoiceConfig`), the client provisions, the LED
-appears in the menu bar. The flow carries the E2EE-scoping line (§1). Settings
-lists circles with their shortcut bindings and an unlink action. Native macOS UI
-throughout, like `AddPagerView`/`SettingsView`.
+"Add voice locket…" beside the pager create/join entry points: three fields —
+server URL, claim token, **CA fingerprint** (the out-of-band bundle, §3.1) —
+then the enrolment flow runs and the LED appears in the menu bar. A fingerprint
+mismatch is its own error state, worded so the user knows the token was *not*
+sent. A "dev server (open enrolment)" toggle swaps the token/fingerprint fields
+for a circle-id field (§3.1b). The flow carries the E2EE-scoping line (§1).
+Settings lists circles with their shortcut bindings and an unlink action.
+Native macOS UI throughout, like `AddPagerView`/`SettingsView`.
 
 ### 4.5 Quit during recording
 
@@ -272,12 +312,15 @@ Two layers, matching the existing boundary:
   discard), `VoiceEngine` with stub transports (LWW-free but idempotency-heavy:
   duplicate `tx.start`, replayed PUBLISH, catch-up reconciliation), receipt
   unknown-key preservation.
-- **Integration (`swift run e2e`, new voice stage)** — two headless VoiceCore
-  "devices" against the real server (endpoint via env var): provision → record →
-  chase-play on the other side → receipts → resume-after-cut → catch-up after a
-  dropped session. Artificial jitter/latency injection lives in the transport
-  stubs — this harness is the §3.3 reference-client job, and it stays useful as
-  the pendant firmware's test bench.
+- **Integration (`swift run e2e`, voice stage)** — two headless VoiceCore
+  "devices" against a live server: provision → record → receive → play →
+  reply → receipts. Two gates: **dev mode** (`VOICE_SERVER_URL` +
+  `VOICE_DEV=1`) enrols via open provisioning with self-picked ids into a
+  fresh throwaway circle — runnable against the local `VLK_ENROLMENT=open`
+  testbed with no tokens; **production mode** (`VOICE_SERVER_URL` +
+  `VOICE_CLAIM_TOKEN_A`/`_B` + `VOICE_CA_FINGERPRINT`) exercises the full
+  §3.1 enrolment. Unset → the stage skips with one line. This harness is the
+  pendant spec's §3.3 reference-client job.
 - **Manual last mile** — menu bar rendering, real audio in/out, hotkey feel.
 
 ## 7. Explicitly out of scope (v1)
@@ -290,12 +333,16 @@ Two layers, matching the existing boundary:
 
 ## 8. Open questions
 
-- Claim-token issuance flow for non-factory clients (shared with protocol §10);
-  now anchored to the user's account per protocol §8, but the issuance UX/API is
-  still unspecified.
-- The member-list shape in circle config: user-scoped receipts require mapping an
-  echoed patch's `device_id` to a user, so the config must carry each member's
-  devices. Assumed here; needs a protocol minor to pin down.
+- ~~The member-list shape in circle config~~ — **resolved by CLIENT.md**:
+  `members: [{user_id, devices: [...]}]`.
+- **PROTOCOL.md §8 and CLIENT.md disagree** on CSR identity: §8 step 3 still
+  says the CSR carries a "requested `device_id`", CLIENT.md says the CN is a
+  placeholder the CA overrides. This client implements CLIENT.md; §8 should be
+  amended ("fix whichever is wrong and bump both").
+- **Heard-state bootstrap gap**: catch-up returns transmissions but no
+  receipts, so a freshly enrolled device queues messages the user already
+  heard elsewhere as unheard. Needs either receipt state in catch-up records
+  or a receipts fetch; until then, first-enrolment queues over-report.
 - Whether `N_start = 500 ms` is right on desktop — `client.stats` will tell.
 - Multiple circles per Mac is assumed to work (one status item + engine + identity
   per circle, each its own provisioned device). The *pendant* multi-circle
