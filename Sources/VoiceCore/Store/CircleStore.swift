@@ -29,14 +29,20 @@ public struct VoiceCircle: Codable, Equatable, Identifiable {
     public var shortcut: KeyBinding?
     /// Highest `tx_index` reconciled — the catch-up cursor (§5.2).
     public var lastTxIndex: Int64
+    /// The circle CA's certificate chain (DER), from provisioning — the only
+    /// trust anchors both TLS stacks accept. Not secret; the private key
+    /// lives in the Keychain.
+    public var caBundle: [Data]
 
     public init(id: UUID = UUID(), config: CircleConfig, nickname: String,
-                shortcut: KeyBinding? = nil, lastTxIndex: Int64 = 0) {
+                shortcut: KeyBinding? = nil, lastTxIndex: Int64 = 0,
+                caBundle: [Data] = []) {
         self.id = id
         self.config = config
         self.nickname = nickname
         self.shortcut = shortcut
         self.lastTxIndex = lastTxIndex
+        self.caBundle = caBundle
     }
 }
 
@@ -63,13 +69,14 @@ public final class CircleStore: ObservableObject {
     }
 
     @discardableResult
-    public func add(config: CircleConfig) -> VoiceCircle {
+    public func add(config: CircleConfig, caBundle: [Data] = []) -> VoiceCircle {
         let counter = defaults.integer(forKey: Keys.nicknameCounter) + 1
         defaults.set(counter, forKey: Keys.nicknameCounter)
         let circle = VoiceCircle(
             config: config,
             nickname: "Locket \(counter)",
-            shortcut: circles.isEmpty ? .commandOptionR : nil)
+            shortcut: circles.isEmpty ? .commandOptionR : nil,
+            caBundle: caBundle)
         circles.append(circle)
         save()
         return circle

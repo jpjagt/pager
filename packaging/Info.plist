@@ -22,6 +22,8 @@
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>july.dev</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Pager uses the microphone to record voice messages for your voice lockets. Recording only happens while you hold the record shortcut.</string>
     <key>SUEnableAutomaticChecks</key>
     <true/>
     <key>SUFeedURL</key>

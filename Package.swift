@@ -90,7 +90,8 @@ let package = Package(
         .target(name: "PagerUI", dependencies: ["PagerCore"], path: "Sources/PagerUI"),
         .executableTarget(
             name: "Pager",
-            dependencies: ["PagerCore", "PagerUI", .product(name: "Sparkle", package: "Sparkle")],
+            dependencies: ["PagerCore", "PagerUI", "VoiceCore",
+                           .product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/Pager"),
         .executableTarget(name: "DecodeLog", dependencies: ["PagerCore"], path: "Sources/DecodeLog"),
         .executableTarget(name: "E2E", dependencies: ["PagerCore"], path: "Sources/E2E"),

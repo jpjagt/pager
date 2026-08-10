@@ -20,6 +20,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let syncLog = FileSyncLog(url: AppDelegate.logURL)
     private let mailComposer: MailComposer = SharingServiceMailComposer()
     let updateController = UpdateController()
+    /// The voice-locket half of the app: per-circle engines, LED status
+    /// items, global hotkeys. Fully parallel to the pager wiring below.
+    private lazy var voice = VoiceCoordinator(log: syncLog,
+                                              showSettings: { [weak self] in self?.showSettings() })
 
     /// ~/Library/Logs/Pager/pager-logs.jsonl — also visible in Console.app.
     static let logURL: URL = FileManager.default
@@ -39,6 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in self?.reconcile(links: links) }
             }
             .store(in: &cancellables)
+
+        voice.start()
 
         pathMonitor.pathUpdateHandler = { [weak self] path in
             guard path.status == .satisfied, let self else { return }
@@ -94,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         models.values.forEach { $0.commit() }
         engines.values.forEach { $0.flushSynchronously() }
+        voice.flushAll() // an in-flight recording is sent, never discarded
     }
 
     @objc private func didWake() {
@@ -108,6 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func reconnectAll() {
         engines.values.forEach { $0.reconnectNow() }
+        voice.reconnectAll()
     }
 
     /// Diff current links against live controllers/engines.
@@ -306,7 +314,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         settingsWindow.show(SettingsView(
             store: store,
             updates: updateController,
+            circles: voice.circles,
             onAddPager: { [weak self] in self?.showOnboarding() },
+            onAddCircle: { [weak self] in self?.voice.showAddCircle() },
+            onUnlinkCircle: { [weak self] id in self?.voice.unlink(id) },
             onEmailDebugReport: { [weak self] includeMessages in
                 self?.sendDebugReport(includeMessages: includeMessages) ?? false
             }))

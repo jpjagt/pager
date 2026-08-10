@@ -6,6 +6,9 @@ import Security
 /// its on-chip keypair) and the CA-issued certificate next to it, findable
 /// as a `SecIdentity` for both TLS stacks.
 ///
+/// Identities are keyed by the client's `device_id` — minted before
+/// provisioning, so the key can exist before the circle does.
+///
 /// Thin by design — decisions live in callers; this file is unit-untested
 /// (it touches the real Keychain) and exercised by e2e and the app.
 public final class KeychainIdentityStore: @unchecked Sendable {
@@ -15,19 +18,23 @@ public final class KeychainIdentityStore: @unchecked Sendable {
         self.tagPrefix = tagPrefix
     }
 
-    private func tag(_ circleId: String) -> Data {
-        Data("\(tagPrefix).\(circleId)".utf8)
+    private func keyTag(_ deviceId: String) -> Data {
+        Data("\(tagPrefix).\(deviceId)".utf8)
     }
 
-    /// Generates (or returns the existing) private key for a circle.
-    public func privateKey(circleId: String) throws -> SecKey {
-        if let existing = findKey(circleId: circleId) { return existing }
+    private func label(_ deviceId: String) -> String {
+        "\(tagPrefix).\(deviceId)"
+    }
+
+    /// Generates (or returns the existing) private key for a device id.
+    public func privateKey(deviceId: String) throws -> SecKey {
+        if let existing = findKey(deviceId: deviceId) { return existing }
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
             kSecPrivateKeyAttrs as String: [
                 kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: tag(circleId),
+                kSecAttrApplicationTag as String: keyTag(deviceId),
             ],
         ]
         var error: Unmanaged<CFError>?
@@ -37,10 +44,10 @@ public final class KeychainIdentityStore: @unchecked Sendable {
         return key
     }
 
-    private func findKey(circleId: String) -> SecKey? {
+    private func findKey(deviceId: String) -> SecKey? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: tag(circleId),
+            kSecAttrApplicationTag as String: keyTag(deviceId),
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecReturnRef as String: true,
         ]
@@ -76,16 +83,16 @@ public final class KeychainIdentityStore: @unchecked Sendable {
         }
     }
 
-    /// Stores the issued certificate; afterwards `identity(circleId:)`
+    /// Stores the issued certificate; afterwards `identity(deviceId:)`
     /// resolves because key and certificate sit in the same Keychain.
-    public func storeCertificate(_ der: Data, circleId: String) throws {
+    public func storeCertificate(_ der: Data, deviceId: String) throws {
         guard let certificate = SecCertificateCreateWithData(nil, der as CFData) else {
             throw ProvisioningError.malformedResponse
         }
         let attributes: [String: Any] = [
             kSecClass as String: kSecClassCertificate,
             kSecValueRef as String: certificate,
-            kSecAttrLabel as String: "\(tagPrefix).\(circleId)",
+            kSecAttrLabel as String: label(deviceId),
         ]
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess || status == errSecDuplicateItem else {
@@ -93,11 +100,11 @@ public final class KeychainIdentityStore: @unchecked Sendable {
         }
     }
 
-    /// The mTLS client identity for a circle, or nil before provisioning.
-    public func identity(circleId: String) -> SecIdentity? {
+    /// The mTLS client identity for a device id, or nil before provisioning.
+    public func identity(deviceId: String) -> SecIdentity? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassIdentity,
-            kSecAttrLabel as String: "\(tagPrefix).\(circleId)",
+            kSecAttrLabel as String: label(deviceId),
             kSecReturnRef as String: true,
         ]
         var item: CFTypeRef?
@@ -107,15 +114,15 @@ public final class KeychainIdentityStore: @unchecked Sendable {
         return (item as! SecIdentity)
     }
 
-    /// Unlinking a circle removes its key and certificate.
-    public func removeIdentity(circleId: String) {
+    /// Unlinking a circle removes its device's key and certificate.
+    public func removeIdentity(deviceId: String) {
         SecItemDelete([
             kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: tag(circleId),
+            kSecAttrApplicationTag as String: keyTag(deviceId),
         ] as CFDictionary)
         SecItemDelete([
             kSecClass as String: kSecClassCertificate,
-            kSecAttrLabel as String: "\(tagPrefix).\(circleId)",
+            kSecAttrLabel as String: label(deviceId),
         ] as CFDictionary)
     }
 }

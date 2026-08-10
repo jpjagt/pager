@@ -66,6 +66,7 @@ final class FakeSignal: SignalChannel {
 
     func start() { started = true }
     func stop() { started = false }
+    func reconnectNow() {}
     func publish(_ payload: Data) { published.append(payload) }
 
     func deliver(_ json: String) {

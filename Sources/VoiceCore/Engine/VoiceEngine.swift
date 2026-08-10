@@ -10,6 +10,7 @@ public protocol SignalChannel: AnyObject {
     var onState: ((MqttSession.State) -> Void)? { get set }
     func start()
     func stop()
+    func reconnectNow()
     func publish(_ payload: Data)
 }
 
@@ -112,6 +113,11 @@ public final class VoiceEngine {
         playback = nil
         record?.discard()
         record = nil
+    }
+
+    /// Network path restored / wake from sleep.
+    public func reconnectNow() {
+        signal.reconnectNow()
     }
 
     /// Quit path: quitting commits — an in-flight recording ends and its

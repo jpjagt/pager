@@ -1,18 +1,24 @@
 import SwiftUI
 import PagerCore
+import VoiceCore
 
 /// One shared settings window: all links with per-link options, then app-wide.
 struct SettingsView: View {
     @ObservedObject var store: LinkStore
     @ObservedObject var updates: UpdateController
+    @ObservedObject var circles: CircleStore
     var onAddPager: (() -> Void)?
+    var onAddCircle: (() -> Void)?
+    var onUnlinkCircle: ((UUID) -> Void)?
     /// Returns false if no mail account is configured (so we can tell the user).
     var onEmailDebugReport: ((_ includeMessages: Bool) -> Bool)?
 
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var confirmUnlink: PagerLink?
+    @State private var confirmUnlinkCircle: VoiceCircle?
     @State private var includeMessages = false
     @State private var showNoMailAlert = false
+    @State private var displacedNickname: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -25,6 +31,9 @@ struct SettingsView: View {
             }
 
             Button("add a pager…") { onAddPager?() }
+
+            Divider()
+            voiceSection
 
             Divider()
             settingsSection
@@ -45,6 +54,48 @@ struct SettingsView: View {
                 message: Text("this removes the pager from this device only. your BFF keeps theirs."),
                 primaryButton: .destructive(Text("unlink")) { store.remove(id: link.id) },
                 secondaryButton: .cancel())
+        }
+        .alert(item: $confirmUnlinkCircle) { circle in
+            Alert(
+                title: Text("unlink \(circle.nickname)?"),
+                message: Text("this removes the locket, its identity and its stored messages "
+                    + "from this Mac only. your other devices keep theirs."),
+                primaryButton: .destructive(Text("unlink")) { onUnlinkCircle?(circle.id) },
+                secondaryButton: .cancel())
+        }
+    }
+
+    private var voiceSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("voice lockets").font(.headline)
+            ForEach(circles.circles) { circle in
+                HStack {
+                    Text(circle.nickname)
+                    Text(circle.config.circleId)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    KeyCaptureField(binding: Binding(
+                        get: { circles.circles.first { $0.id == circle.id }?.shortcut },
+                        set: { newBinding in
+                            let displaced = circles.bind(newBinding, to: circle.id)
+                            displacedNickname = displaced?.nickname
+                        }))
+                        .frame(width: 110, height: 24)
+                    Button("unlink", role: .destructive) { confirmUnlinkCircle = circle }
+                }
+            }
+            if let displacedNickname {
+                Text("that shortcut was moved here from \(displacedNickname) — give it a new one.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !circles.circles.isEmpty {
+                Text("tap the shortcut to play · hold it to record. voice circles are not "
+                    + "end-to-end encrypted; the server processes audio.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button("add a voice locket…") { onAddCircle?() }
         }
     }
 
