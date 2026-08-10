@@ -14,6 +14,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "PagerCore", path: "Sources/PagerCore"),
+        .target(name: "VoiceCore", dependencies: ["PagerCore"], path: "Sources/VoiceCore"),
         .target(name: "PagerUI", dependencies: ["PagerCore"], path: "Sources/PagerUI"),
         .executableTarget(
             name: "Pager",
@@ -23,6 +24,7 @@ let package = Package(
         .executableTarget(name: "E2E", dependencies: ["PagerCore"], path: "Sources/E2E"),
         .executableTarget(name: "DesignPreview", dependencies: ["PagerUI"], path: "Sources/DesignPreview"),
         .testTarget(name: "PagerCoreTests", dependencies: ["PagerCore"], path: "Tests/PagerCoreTests"),
+        .testTarget(name: "VoiceCoreTests", dependencies: ["VoiceCore"], path: "Tests/VoiceCoreTests"),
         .testTarget(name: "PagerUITests", dependencies: ["PagerUI"], path: "Tests/PagerUITests"),
     ]
 )
