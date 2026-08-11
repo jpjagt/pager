@@ -42,19 +42,22 @@ public final class KeychainIdentityStore: IdentityStoring, @unchecked Sendable {
 
     /// Generates (or returns the existing) private key for a device id.
     ///
-    /// Generates a **permanent** EC key, carrying an ACL that lets any
-    /// application sign without a prompt.
+    /// Generates a **permanent** EC key.
     ///
-    /// Two non-obvious constraints, both learned the hard way:
-    /// - The key MUST be created permanent in one call (`kSecAttrIsPermanent`
-    ///   inside `kSecPrivateKeyAttrs`). Creating a transient key and then
-    ///   `SecItemAdd`-ing it produces an entry that never pairs with its
-    ///   certificate — `SecItemCopyMatching(kSecClassIdentity)` silently
-    ///   skips it, so the client falls back to some *other* device's cert.
-    /// - Pager is ad-hoc signed, so the default creator-only ACL cannot
-    ///   durably recognize the app; every mTLS handshake would raise a
-    ///   keychain password dialog and strangle voice traffic. The trust-all
-    ///   ACL is the standard trade for an unsigned app doing client TLS.
+    /// It must be created permanent in one call (`kSecAttrIsPermanent` inside
+    /// `kSecPrivateKeyAttrs`). Creating a transient key and then
+    /// `SecItemAdd`-ing it produces an entry that never pairs with its
+    /// certificate — `SecItemCopyMatching(kSecClassIdentity)` silently skips
+    /// it, so the client falls back to some *other* device's cert.
+    ///
+    /// The key gets the default creator-only ACL. Pager is ad-hoc signed, so
+    /// macOS re-prompts to use the key whenever the app's code identity
+    /// changes (i.e. after each rebuild); "Always Allow" suppresses it for a
+    /// given build. There is no reliable way to make it prompt-free from an
+    /// unsigned app — a legacy `SecAccess` passed here is ignored by
+    /// `SecKeyCreateRandomKey`, and the alternatives break identity pairing.
+    /// A real Developer ID signature is the proper fix: a stable identity
+    /// makes "Always Allow" permanent.
     public func privateKey(deviceId: String) throws -> SecKey {
         if let existing = findKey(deviceId: deviceId) { return existing }
         let attributes: [String: Any] = [
@@ -64,7 +67,6 @@ public final class KeychainIdentityStore: IdentityStoring, @unchecked Sendable {
                 kSecAttrIsPermanent as String: true,
                 kSecAttrApplicationTag as String: keyTag(deviceId),
                 kSecAttrLabel as String: label(deviceId),
-                kSecAttrAccess as String: try promptFreeAccess(label: label(deviceId)),
             ],
         ]
         var error: Unmanaged<CFError>?
@@ -72,27 +74,6 @@ public final class KeychainIdentityStore: IdentityStoring, @unchecked Sendable {
             throw error!.takeRetainedValue() as Error
         }
         return key
-    }
-
-    /// A legacy `SecAccess` whose use-key ACLs trust every application with
-    /// no prompt selector. The SecAccess API is deprecated but remains the
-    /// only way to express this for the file-based login keychain.
-    private func promptFreeAccess(label: String) throws -> SecAccess {
-        var accessRef: SecAccess?
-        let status = SecAccessCreate(label as CFString, [] as CFArray, &accessRef)
-        guard status == errSecSuccess, let access = accessRef else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-        }
-        for authorization in [kSecACLAuthorizationSign, kSecACLAuthorizationAny] {
-            guard let acls = SecAccessCopyMatchingACLList(access, authorization)
-                    as? [SecACL] else { continue }
-            for acl in acls {
-                // nil application list = every application; a default prompt
-                // selector with no "require passphrase" bits = never ask.
-                SecACLSetContents(acl, nil, label as CFString, SecKeychainPromptSelector())
-            }
-        }
-        return access
     }
 
     private func findKey(deviceId: String) -> SecKey? {
