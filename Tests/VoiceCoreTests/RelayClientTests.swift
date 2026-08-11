@@ -136,6 +136,17 @@ final class RelayClientTests: XCTestCase {
                        "/v1/transmissions/t3/status")
     }
 
+    func testCatchupAcceptsWrappedEnvelope() async throws {
+        // The reference server wraps the array: {"transmissions": [...]}.
+        let json = """
+        {"transmissions": [{"txn_id":"a","sender":"vpd-1","circle":"cir-1",
+          "tx_index":5,"state":"complete"}]}
+        """
+        VoiceStubURLProtocol.handler = { _ in .init(status: 200, chunks: [Data(json.utf8)]) }
+        let records = try await client.catchup(afterIndex: 4)
+        XCTAssertEqual(records.map(\.txnId), ["a"])
+    }
+
     func testCatchupParsesRecordsAndCursor() async throws {
         let json = """
         [{"txn_id":"a","sender":"vpd-1","circle":"cir-1","tx_index":5,

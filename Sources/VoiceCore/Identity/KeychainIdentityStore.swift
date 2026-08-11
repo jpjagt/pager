@@ -40,21 +40,67 @@ public final class KeychainIdentityStore: IdentityStoring, @unchecked Sendable {
     }
 
     /// Generates (or returns the existing) private key for a device id.
+    ///
+    /// The key is stored with an ACL that lets **any application sign
+    /// without a prompt**. Pager is ad-hoc signed, so the default
+    /// creator-only ACL cannot durably recognize the app — every mTLS
+    /// handshake (each relay call, each broker reconnect) would raise a
+    /// keychain password dialog, which in practice strangles all voice
+    /// traffic. The loosening is deliberate and scoped to this key; it is
+    /// the standard trade for unsigned/ad-hoc apps doing client TLS.
     public func privateKey(deviceId: String) throws -> SecKey {
         if let existing = findKey(deviceId: deviceId) { return existing }
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
-            kSecPrivateKeyAttrs as String: [
-                kSecAttrIsPermanent as String: true,
-                kSecAttrApplicationTag as String: keyTag(deviceId),
-            ],
         ]
         var error: Unmanaged<CFError>?
         guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
             throw error!.takeRetainedValue() as Error
         }
+        let add: [String: Any] = [
+            kSecClass as String: kSecClassKey,
+            kSecValueRef as String: key,
+            kSecAttrApplicationTag as String: keyTag(deviceId),
+            kSecAttrLabel as String: label(deviceId),
+            kSecAttrAccess as String: try promptFreeAccess(label: label(deviceId)),
+        ]
+        let status = SecItemAdd(add as CFDictionary, nil)
+        guard status == errSecSuccess || status == errSecDuplicateItem else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
         return key
+    }
+
+    /// A legacy `SecAccess` whose use-key ACLs trust every application with
+    /// no prompt selector. The SecAccess API is deprecated but remains the
+    /// only way to express this for the file-based login keychain.
+    private func promptFreeAccess(label: String) throws -> SecAccess {
+        var accessRef: SecAccess?
+        let status = SecAccessCreate(label as CFString, nil, &accessRef)
+        guard status == errSecSuccess, let access = accessRef else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+        let authorizations = [
+            kSecACLAuthorizationSign, kSecACLAuthorizationDecrypt,
+            kSecACLAuthorizationMAC, kSecACLAuthorizationDerive,
+            kSecACLAuthorizationExportClear, kSecACLAuthorizationAny,
+        ]
+        for authorization in authorizations {
+            guard let acls = SecAccessCopyMatchingACLList(access, authorization)
+                    as? [SecACL] else { continue }
+            for acl in acls {
+                var applications: CFArray?
+                var description: CFString?
+                var prompt = SecKeychainPromptSelector()
+                SecACLCopyContents(acl, &applications, &description, &prompt)
+                // nil application list = every application; empty prompt
+                // selector = never ask.
+                SecACLSetContents(acl, nil, description ?? label as CFString,
+                                  SecKeychainPromptSelector())
+            }
+        }
+        return access
     }
 
     private func findKey(deviceId: String) -> SecKey? {

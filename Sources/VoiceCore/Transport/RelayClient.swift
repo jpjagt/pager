@@ -153,7 +153,16 @@ public final class RelayClient: NSObject, VoiceTransport, @unchecked Sendable {
         let (data, response) = try await session.data(for: request(components.url!))
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200 ..< 300).contains(status) else { throw VoiceTransportError.http(status) }
-        return try JSONDecoder().decode([CatchupRecord].self, from: data)
+        // PROTOCOL.md §5.2 specifies a bare array; the reference server wraps
+        // it in {"transmissions": [...]}. Accept both until the docs and
+        // server agree (flagged upstream).
+        if let bare = try? JSONDecoder().decode([CatchupRecord].self, from: data) {
+            return bare
+        }
+        struct Wrapped: Decodable {
+            let transmissions: [CatchupRecord]
+        }
+        return try JSONDecoder().decode(Wrapped.self, from: data).transmissions
     }
 }
 
