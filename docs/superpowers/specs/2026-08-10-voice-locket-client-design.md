@@ -162,7 +162,7 @@ join via `from_seq`.
   the MQTT session, the transmission table, the **unheard queue ordered by
   `tx_index`** (never by timestamp — devices' clocks are informational only), the
   receipt state, and download orchestration. On `tx.start` it marks a live
-  transmission (menu LED goes amber); download begins on demand (tap) or eagerly
+  transmission (menu LED goes lavender-blue); download begins on demand (tap) or eagerly
   once `tx.end` arrives, whichever first. Emits `delivered_at` when a complete
   stream is on disk, `heard_at` when first playback completes. Catch-up:
   `GET /v1/transmissions?after_index=N` bootstraps a fresh device (`N=0`) and
@@ -229,7 +229,7 @@ colors only — nothing blinks.
 |---|---|
 | idle | off — faint gray |
 | unheard messages | green |
-| live incoming transmission (chase-play available) | amber |
+| live incoming transmission (chase-play available) | lavender-blue |
 | recording | red, plus elapsed time as status-item text: `● 0:12` |
 | playing | white/bright |
 | offline / error | LED off, ring dimmed |

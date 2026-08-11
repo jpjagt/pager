@@ -18,4 +18,15 @@ public enum VoiceConfig {
     /// are cellular numbers; a wired Mac can start much sooner.
     public static let playoutStartMs = 500
     public static let playoutResumeMs = 250
+
+    /// The default july.dev voice deployment. Baked in so the add flow only
+    /// asks for a claim token. Neither value is a secret: the fingerprint is
+    /// a hash of the CA's *public* certificate (the same one served at
+    /// `GET /v1/ca`), which is exactly cert-pinning material meant to ship in
+    /// clients; the server URL is public. Only the CA's private key is
+    /// secret, and that never leaves the server. Both are overridable in the
+    /// add flow for other deployments and dev testbeds.
+    public static let defaultServerURL = "https://vlk.liminal.flowers:8443"
+    public static let defaultCAFingerprint =
+        "6c4358325430c535c8d250eafe91184a8d4fe29ad6f67ee3bc433b0d1fad46a5"
 }

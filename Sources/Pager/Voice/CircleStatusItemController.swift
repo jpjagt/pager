@@ -91,7 +91,7 @@ final class CircleStatusItemController: NSObject, NSMenuDelegate {
         case .recording: return NSColor(calibratedRed: 0.92, green: 0.26, blue: 0.21, alpha: 1)
         case .uploading: return NSColor(calibratedRed: 0.92, green: 0.26, blue: 0.21, alpha: 0.5)
         case .playing: return NSColor(calibratedWhite: 0.98, alpha: 1)
-        case .incoming: return NSColor(calibratedRed: 1.0, green: 0.72, blue: 0.18, alpha: 1)
+        case .incoming: return NSColor(calibratedRed: 0.55, green: 0.53, blue: 0.95, alpha: 1) // lavender-blue: a live transmission
         case .unheard: return NSColor(calibratedRed: 0.24, green: 0.82, blue: 0.44, alpha: 1)
         case .offline, .idle: return .clear
         }

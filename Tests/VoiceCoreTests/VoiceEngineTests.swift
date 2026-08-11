@@ -85,7 +85,7 @@ final class VoiceEngineTests: XCTestCase {
     func testStartEndDownloadsStoresAndReportsDelivered() async {
         transport.scriptDownload(txnId: "aaaa", chunks: [VLKFixtures.body(frames: testFrames)])
         deliverStart()
-        XCTAssertTrue(leds.contains(.incoming), "open transmission shows amber")
+        XCTAssertTrue(leds.contains(.incoming), "open transmission shows the live color")
         deliverEnd()
         let stored = await waitUntil {
             self.messages.hasAudio(circleId: self.circleId, txnId: "aaaa")

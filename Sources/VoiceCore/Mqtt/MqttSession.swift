@@ -68,7 +68,13 @@ public final class MqttSession {
     public init(connector: MqttConnector, clientId: String,
                 subscribeTopic: String, publishTopic: String,
                 keepAliveSeconds: UInt16 = 60,
-                sessionExpirySeconds: UInt32 = 7 * 86_400,
+                // MQTT 5 defaults the session-expiry-interval property to 0,
+                // which discards the broker session at disconnect even with
+                // clean_start=false — silently defeating offline delivery
+                // (PROTOCOL.md §5.1). 0xFFFFFFFF = never expire, the "long
+                // expiry" the protocol asks for; the persistent session is
+                // what queues events for a device that was asleep.
+                sessionExpirySeconds: UInt32 = 0xFFFF_FFFF,
                 log: SyncLogSink = NoopSyncLog()) {
         self.connector = connector
         self.clientId = clientId

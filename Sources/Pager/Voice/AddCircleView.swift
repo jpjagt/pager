@@ -10,9 +10,12 @@ struct AddCircleView: View {
     let identityStore: KeychainIdentityStore
     var onDone: (() -> Void)?
 
-    @State private var serverURL = ""
+    // Pre-filled with the default july.dev deployment; the usual case only
+    // needs a claim token. Revealed for editing under "different server".
+    @State private var serverURL = VoiceConfig.defaultServerURL
     @State private var claimToken = ""
-    @State private var caFingerprint = ""
+    @State private var caFingerprint = VoiceConfig.defaultCAFingerprint
+    @State private var customServer = false
     @State private var devMode = false
     @State private var devCircleId = ""
     @State private var busy = false
@@ -36,32 +39,39 @@ struct AddCircleView: View {
 
     private var canSubmit: Bool {
         guard !busy, !serverURL.isEmpty else { return false }
-        return devMode ? !devCircleId.isEmpty : !claimToken.isEmpty && !caFingerprint.isEmpty
+        if devMode { return !devCircleId.isEmpty }
+        return !claimToken.isEmpty && !caFingerprint.isEmpty
     }
 
     private var enrollSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("join a voice circle as a new device of your account. paste the "
-                + "server, claim token and CA fingerprint you were given — they "
-                + "belong together.")
+                + "claim token you were given.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            TextField("server, e.g. https://voice.example.com", text: $serverURL)
-                .textFieldStyle(.roundedBorder)
             if devMode {
                 TextField("circle id, e.g. cir-77b0e4d9", text: $devCircleId)
                     .textFieldStyle(.roundedBorder)
             } else {
                 TextField("claim token", text: $claimToken)
                     .textFieldStyle(.roundedBorder)
-                TextField("CA fingerprint (SHA-256, hex)", text: $caFingerprint)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.caption, design: .monospaced))
             }
-            Toggle("dev server (open enrolment, no certificates)", isOn: $devMode)
+
+            Toggle("different server", isOn: $customServer.animation())
                 .font(.caption)
+            if customServer {
+                TextField("server", text: $serverURL)
+                    .textFieldStyle(.roundedBorder)
+                if !devMode {
+                    TextField("CA fingerprint (SHA-256, hex)", text: $caFingerprint)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.caption, design: .monospaced))
+                }
+                Toggle("dev server (open enrolment, no certificates)", isOn: $devMode)
+                    .font(.caption)
+            }
 
             Text("voice circles are not end-to-end encrypted; the server processes audio. "
                 + "(pagers stay E2E-encrypted as always.)")
