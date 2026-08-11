@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import CryptoKit
 
 /// What enrolment needs from identity storage — a seam so the flow is
 /// testable with ephemeral (non-Keychain) keys.
@@ -41,33 +42,34 @@ public final class KeychainIdentityStore: IdentityStoring, @unchecked Sendable {
 
     /// Generates (or returns the existing) private key for a device id.
     ///
-    /// The key is stored with an ACL that lets **any application sign
-    /// without a prompt**. Pager is ad-hoc signed, so the default
-    /// creator-only ACL cannot durably recognize the app — every mTLS
-    /// handshake (each relay call, each broker reconnect) would raise a
-    /// keychain password dialog, which in practice strangles all voice
-    /// traffic. The loosening is deliberate and scoped to this key; it is
-    /// the standard trade for unsigned/ad-hoc apps doing client TLS.
+    /// Generates a **permanent** EC key, carrying an ACL that lets any
+    /// application sign without a prompt.
+    ///
+    /// Two non-obvious constraints, both learned the hard way:
+    /// - The key MUST be created permanent in one call (`kSecAttrIsPermanent`
+    ///   inside `kSecPrivateKeyAttrs`). Creating a transient key and then
+    ///   `SecItemAdd`-ing it produces an entry that never pairs with its
+    ///   certificate — `SecItemCopyMatching(kSecClassIdentity)` silently
+    ///   skips it, so the client falls back to some *other* device's cert.
+    /// - Pager is ad-hoc signed, so the default creator-only ACL cannot
+    ///   durably recognize the app; every mTLS handshake would raise a
+    ///   keychain password dialog and strangle voice traffic. The trust-all
+    ///   ACL is the standard trade for an unsigned app doing client TLS.
     public func privateKey(deviceId: String) throws -> SecKey {
         if let existing = findKey(deviceId: deviceId) { return existing }
         let attributes: [String: Any] = [
             kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
             kSecAttrKeySizeInBits as String: 256,
+            kSecPrivateKeyAttrs as String: [
+                kSecAttrIsPermanent as String: true,
+                kSecAttrApplicationTag as String: keyTag(deviceId),
+                kSecAttrLabel as String: label(deviceId),
+                kSecAttrAccess as String: try promptFreeAccess(label: label(deviceId)),
+            ],
         ]
         var error: Unmanaged<CFError>?
         guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
             throw error!.takeRetainedValue() as Error
-        }
-        let add: [String: Any] = [
-            kSecClass as String: kSecClassKey,
-            kSecValueRef as String: key,
-            kSecAttrApplicationTag as String: keyTag(deviceId),
-            kSecAttrLabel as String: label(deviceId),
-            kSecAttrAccess as String: try promptFreeAccess(label: label(deviceId)),
-        ]
-        let status = SecItemAdd(add as CFDictionary, nil)
-        guard status == errSecSuccess || status == errSecDuplicateItem else {
-            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
         }
         return key
     }
@@ -77,27 +79,17 @@ public final class KeychainIdentityStore: IdentityStoring, @unchecked Sendable {
     /// only way to express this for the file-based login keychain.
     private func promptFreeAccess(label: String) throws -> SecAccess {
         var accessRef: SecAccess?
-        let status = SecAccessCreate(label as CFString, nil, &accessRef)
+        let status = SecAccessCreate(label as CFString, [] as CFArray, &accessRef)
         guard status == errSecSuccess, let access = accessRef else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
         }
-        let authorizations = [
-            kSecACLAuthorizationSign, kSecACLAuthorizationDecrypt,
-            kSecACLAuthorizationMAC, kSecACLAuthorizationDerive,
-            kSecACLAuthorizationExportClear, kSecACLAuthorizationAny,
-        ]
-        for authorization in authorizations {
+        for authorization in [kSecACLAuthorizationSign, kSecACLAuthorizationAny] {
             guard let acls = SecAccessCopyMatchingACLList(access, authorization)
                     as? [SecACL] else { continue }
             for acl in acls {
-                var applications: CFArray?
-                var description: CFString?
-                var prompt = SecKeychainPromptSelector()
-                SecACLCopyContents(acl, &applications, &description, &prompt)
-                // nil application list = every application; empty prompt
-                // selector = never ask.
-                SecACLSetContents(acl, nil, description ?? label as CFString,
-                                  SecKeychainPromptSelector())
+                // nil application list = every application; a default prompt
+                // selector with no "require passphrase" bits = never ask.
+                SecACLSetContents(acl, nil, label as CFString, SecKeychainPromptSelector())
             }
         }
         return access
@@ -160,17 +152,29 @@ public final class KeychainIdentityStore: IdentityStoring, @unchecked Sendable {
     }
 
     /// The mTLS client identity for a device id, or nil before provisioning.
+    ///
+    /// Resolves by the certificate's **Common Name**, which is the only
+    /// authoritative correlation: `kSecAttrLabel` is silently ignored by
+    /// `kSecClassIdentity` queries on the macOS file keychain (it returns an
+    /// arbitrary identity instead), and the key's application tag is
+    /// unreliable after enrolment. The CN is set by the CA to the granted
+    /// `device_id`, so enumerating identities and matching CN is exact.
     public func identity(deviceId: String) -> SecIdentity? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassIdentity,
-            kSecAttrLabel as String: label(deviceId),
+            kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnRef as String: true,
         ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else {
-            return nil
+        var items: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &items) == errSecSuccess,
+              let identities = items as? [SecIdentity] else { return nil }
+        return identities.first { identity in
+            var cert: SecCertificate?
+            SecIdentityCopyCertificate(identity, &cert)
+            var cn: CFString?
+            if let cert { SecCertificateCopyCommonName(cert, &cn) }
+            return (cn as String?) == deviceId
         }
-        return (item as! SecIdentity)
     }
 
     /// The key is generated before the server allocates the real device id
@@ -188,15 +192,36 @@ public final class KeychainIdentityStore: IdentityStoring, @unchecked Sendable {
         SecItemUpdate(query as CFDictionary, update as CFDictionary)
     }
 
-    /// Unlinking a circle removes its device's key and certificate.
+    /// Unlinking a circle removes its device's key and certificate. Keyed off
+    /// the certificate CN (see `identity`): find the cert, delete its paired
+    /// private key by public-key hash, then the cert itself.
     public func removeIdentity(deviceId: String) {
-        SecItemDelete([
-            kSecClass as String: kSecClassKey,
-            kSecAttrApplicationTag as String: keyTag(deviceId),
-        ] as CFDictionary)
-        SecItemDelete([
+        let query: [String: Any] = [
             kSecClass as String: kSecClassCertificate,
-            kSecAttrLabel as String: label(deviceId),
-        ] as CFDictionary)
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnRef as String: true,
+        ]
+        var items: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &items) == errSecSuccess,
+              let certs = items as? [SecCertificate] else { return }
+        for cert in certs {
+            var cn: CFString?
+            SecCertificateCopyCommonName(cert, &cn)
+            guard (cn as String?) == deviceId else { continue }
+            if let key = SecCertificateCopyKey(cert),
+               let publicKey = SecKeyCopyExternalRepresentation(key, nil) as Data? {
+                // The private key shares the public key's SHA-1 (its
+                // application label) — the reliable delete predicate.
+                let keyHash = Data(Insecure.SHA1.hash(data: publicKey))
+                SecItemDelete([
+                    kSecClass as String: kSecClassKey,
+                    kSecAttrApplicationLabel as String: keyHash,
+                ] as CFDictionary)
+            }
+            SecItemDelete([
+                kSecClass as String: kSecClassCertificate,
+                kSecValueRef as String: cert,
+            ] as CFDictionary)
+        }
     }
 }
