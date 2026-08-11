@@ -135,7 +135,9 @@ struct AddCircleView: View {
                     ? "the server rejected the request (400) — the token is still valid, try again."
                     : "the server refused the claim token (\(status)) — invalid, expired, or already used."
             } catch {
-                errorText = "couldn't reach the server. check the URL and try again."
+                // Surface the real error — a generic line here has already
+                // hidden three distinct root causes during bring-up.
+                errorText = "enrolment failed: \(error)"
             }
         }
     }
