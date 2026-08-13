@@ -34,9 +34,27 @@ final class AVAudioIO: AudioIO {
     func startCapture(onFrame: @escaping ([Int16]) -> Void) throws {
         let engine = AVAudioEngine()
         let input = engine.inputNode
+        // The sender's half of CLIENT.md "Audio levels": the OS
+        // voice-processing capture path (tuned AGC + noise suppression) is
+        // what puts a well-leveled ~-18 LUFS send on the wire instead of
+        // raw input at whatever the mic gain happens to be. Best-effort —
+        // some devices refuse, and plain capture still works, just quiet
+        // (the receiver's playout normalizer picks up the slack). Must be
+        // set before the tap: enabling changes the input format.
+        try? input.setVoiceProcessingEnabled(true)
+        if input.isVoiceProcessingEnabled {
+            input.isVoiceProcessingAGCEnabled = true
+        }
         let inputFormat = input.outputFormat(forBus: 0)
         guard let converter = AVAudioConverter(from: inputFormat, to: codecFormat) else {
             throw OpusError.creationFailed(-1)
+        }
+        // With voice processing on, the input node reports a multichannel
+        // format (processed mic on channel 0, echo-reference channels after
+        // it); the converter's default many→mono downmix lands on the empty
+        // channels and yields exact silence. Channel 0 is the mic — always.
+        if inputFormat.channelCount > 1 {
+            converter.channelMap = [0]
         }
         pcmCarry = []
         // ~50 ms per tap callback; the carry buffer re-slices to exact frames.

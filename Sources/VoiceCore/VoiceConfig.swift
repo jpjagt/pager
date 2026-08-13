@@ -19,6 +19,20 @@ public enum VoiceConfig {
     public static let playoutStartMs = 500
     public static let playoutResumeMs = 250
 
+    /// Receiver-side playout normalization (CLIENT.md "Audio levels"):
+    /// level every message toward the same playback loudness on the decoded
+    /// PCM, defensively — senders vary and old messages replay forever.
+    /// Target is voiced-frame RMS; the gate keeps room tone from adapting
+    /// the tracker (and from being boosted); the cap bounds how much noise
+    /// a very quiet capture's make-up gain can pull up.
+    public static let playoutTargetDb = -18.0
+    public static let playoutGateDb = -55.0
+    public static let playoutMaxBoostDb = 30.0
+    public static let playoutMaxCutDb = 20.0
+    /// Per-frame tracking step after the first voiced frame (which sets the
+    /// level estimate outright): ~1.2 s time constant at 60 ms frames.
+    public static let playoutLevelAlpha = 0.05
+
     /// The default july.dev voice deployment. Baked in so the add flow only
     /// asks for a claim token. Neither value is a secret: the fingerprint is
     /// a hash of the CA's *public* certificate (the same one served at

@@ -63,6 +63,9 @@ public final class VoiceEngine {
         var frameMs: Int
         /// Encoded separator frames still to render before the next message.
         var separator: [Data] = []
+        /// Per-message: senders differ, so gain never leaks across messages.
+        /// The separator tone bypasses it (synthetic, already at level).
+        var normalizer = PlayoutNormalizer()
     }
 
     public init(circleId: UUID, config: CircleConfig, signal: SignalChannel,
@@ -426,10 +429,9 @@ public final class VoiceEngine {
             return try? codec.decode(frame)
         }
         if let frame = current.machine.nextFrame() {
+            let pcm = (try? codec.decode(frame)).map { current.normalizer.process($0) }
             playback = current
-            let pcm = try? codec.decode(frame)
             if current.machine.state == .complete {
-                playback = current
                 finishCurrentMessage()
             }
             return pcm

@@ -76,9 +76,13 @@ final class VoiceEngineTests: XCTestCase {
         """)
     }
 
-    private let testFrames: [[Int16]] = [[100, -100, 200, -200],
-                                         [300, -300, 400, -400],
-                                         [500, -500, 600, -600]]
+    /// Deliberately sub-gate amplitudes (≤ -61 dBFS RMS): playout
+    /// normalization leaves them untouched, so playback assertions can
+    /// compare samples exactly. Voiced-level audio is covered separately in
+    /// `testPlaybackNormalizesVoicedAudio`.
+    private let testFrames: [[Int16]] = [[5, -5, 10, -10],
+                                         [15, -15, 20, -20],
+                                         [25, -25, 30, -30]]
 
     // MARK: - Inbound lifecycle
 
@@ -176,6 +180,24 @@ final class VoiceEngineTests: XCTestCase {
         XCTAssertTrue(types.contains("receipt.patch"), "heard receipt published")
         XCTAssertTrue(types.contains("client.stats"), "telemetry published")
         XCTAssertEqual(leds.last, .idle)
+    }
+
+    func testPlaybackNormalizesVoicedAudio() {
+        // -12 dBFS square-wave frames: playout must level them to the
+        // playback target (CLIENT.md "Audio levels"), not render them raw.
+        let loud: [[Int16]] = Array(repeating: [8000, -8000, 8000, -8000], count: 3)
+        messages.upsert(circleId: circleId, StoredMessage(
+            txnId: "loud", txIndex: 1, sender: "vpd-friend", frameMs: 60))
+        messages.writeAudio(circleId: circleId, txnId: "loud",
+                            bytes: VLKFixtures.body(frames: loud))
+        engine.playTapped()
+        guard let rendered = audio.tick() else {
+            return XCTFail("no frame rendered")
+        }
+        let meanSquare = rendered.reduce(0.0) { $0 + Double($1) * Double($1) }
+            / Double(rendered.count)
+        let rmsDb = 20 * log10(meanSquare.squareRoot() / 32768)
+        XCTAssertEqual(rmsDb, VoiceConfig.playoutTargetDb, accuracy: 1.5)
     }
 
     func testTapDuringPlaybackStops() {
